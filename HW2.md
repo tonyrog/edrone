@@ -2,20 +2,55 @@
 
 ## GPIO
 
-    Num  direction  edge
-    51   out
-    76   -?
-    85   out
-    86   out
 
-    89   out
-    91   out
-    92   out
-    93   out
+OMAP PINS
 
-    177  out
-    180  out
-    181  out              watchdog enable? (/bin/program.elf.respawner)
+| Pin | Direction | Comment |
+|-----|-----------|---------|
+| 171 | OUTPUT    | kill_uart_m1 |
+| 172 | OUTPUT    | kill_uart_m2 |
+| 173 | OUTPUT    | kill_uart_m3 |
+| 174 | OUTPUT    | kill_uart_m4 |
+| 175 | OUTPUT    | motor_enable |
+| 176 | INPUT     | cut-out |
+| 177 | OUTPUT    | PIC reset |
+| 178 | INPUT     | PIC ICSP Data |
+| 179 | OUTPUT    | PIC ICSP Clock |
+| 180 | OUTPUT    | MB green LED |
+| 181 | OUTPUT    | MB Red LED |
+| 87  | INPUT     | Reset Button |
+| 89  | OUTPUT    | 5V cut-out |
+
+Init
+
+	89  = 1        Disabling 5V power supply
+    177 = 1        PIC reset disable
+    181 = 1        Red LED on
+    180 = 1        Green LED on
+
+MMC PINS (wifi ar6103 on MMC2)
+
+| Pin | Direction | Comment |
+|-----|-----------|---------|
+|  85 |  OUTPUT   | GPIO\_ATH\_WARM\_RST
+|  86 |  OUTPUT   | GPIO\_ATH\_RST_WLAN
+
+| Pin | Direction | Comment |
+|-----|-----------|---------|
+|  51 |  OUTPUT   | USB HOST mode = 0
+|  76 |   xxx     | GPIO\_MMC1\_CD
+
+| Pin | Direction | Comment |
+|-----|-----------|---------|
+| 78  |  INPUT    | rev(0)  |
+| 79  |  INPUT    | rev(1)  |
+| 80  |  INPUT    | rev(2)  |
+| 81  |  INPUT    | rev(3)  |
+
+    Revision = (get(81)<<3)|(get(80)<<2)|(get(79)<<1)|get(78)
+    91   OUTPUT ?
+    92   OUTPUT ?
+    93   OUTPUT ?
 
 
 ## Driver loaded
@@ -157,17 +192,3 @@ video
     video:whitebalance_mode
 
 
-
-# Hardware inventory AR Drone 1.0
-
-## GPIO
-
-    68 Motor1 disable=1/enable=0 ?
-    69 Motor2 disable=1/enable=0 ?
-    70 Motor3 disable=1/enable=0 ?
-    71 Motor4 disable=1/enable=0 ?
-
-    106 input
-    107 
-
-    132 MCLR (navboard.c)
