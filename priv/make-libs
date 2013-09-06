@@ -1,0 +1,31 @@
+#!/bin/sh
+# Simple script to tgz libraries need
+#
+
+tar czf i2c.tgz --directory ../.. \
+    ./i2c/priv/i2c_drv.so \
+    ./i2c/ebin/i2c.app \
+    ./i2c/ebin/i2c_app.beam \
+    ./i2c/ebin/i2c.beam \
+    ./i2c/ebin/i2c_m24256.beam \
+    ./i2c/ebin/i2c_sup.beam
+
+tar czf gpio.tgz --directory ../.. \
+    ./gpio/priv/gpio_drv.so \
+    ./gpio/ebin/gpio.app \
+    ./gpio/ebin/gpio_app.beam \
+    ./gpio/ebin/gpio.beam \
+    ./gpio/ebin/gpio_bench.beam \
+    ./gpio/ebin/gpio_server.beam \
+    ./gpio/ebin/gpio_sup.beam
+
+tar czf uart.tgz --directory ../.. \
+    ./uart/priv/uart_drv.so \
+    ./uart/ebin/uart.app \
+    ./uart/ebin/uart.beam  \
+    ./uart/ebin/uart_devices.beam
+
+tar czf edrone.tgz --directory ../.. \
+    ./edrone/ebin/edrone.app \
+    ./edrone/ebin/edrone_motor.beam \
+    ./edrone/ebin/edrone_bat.beam
