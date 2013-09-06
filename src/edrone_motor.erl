@@ -15,7 +15,16 @@
 -export([open/0, init/1]).
 -export([command_/3]).
 -export([write_pwm/5, write_leds/5, run_pwm/5]).
+-export([delay/2]).
 
+%% test loops
+-export([test_leds/1]).
+-export([test_motors/1]).
+
+%% Motor 0  Front Left    Clockwise
+%% Motor 1  Front Right   Counter-Clockwise
+%% Motor 2  Back  Right   Clockwise
+%% Motor 3  Back  Left    Counter-Clockwise
 
 -define(MOTOR_UART, "/dev/ttyO0").
 -define(GPIO_M1, 78).
@@ -35,6 +44,27 @@
 -define(MOT_LEDORANGE, 3).
 
 -define(TRANSMIT_IVAL, 5).
+
+test_motors(Pid) ->
+    [begin
+	 set_pwm(Pid, M0, M1, M2, M3),
+	 timer:sleep(1000)
+     end || {M0,M1,M2,M3} <- [{10,0,0,0},
+			      {0,10,0,0},
+			      {0,0,10,0},
+			      {0,0,0,10},
+			      {0,0,0,0}] ].
+
+
+test_leds(Pid) ->
+    [begin
+	 set_leds(Pid, L0, L1, L2, L3),
+	 timer:sleep(1000)
+     end || {L0,L1,L2,L3} <- 
+		[{1,0,0,0},{0,1,0,0},{0,0,1,0},{0,0,0,1},
+		 {2,0,0,0},{0,2,0,0},{0,0,2,0},{0,0,0,2},
+		 {3,0,0,0},{0,3,0,0},{0,0,3,0},{0,0,0,3},
+		 {0,0,0,0}]].
 
 start() ->
     spawn_link(
@@ -59,6 +89,9 @@ set_leds(Pid, L0, L1, L2, L3) ->
 
 get_pwm(Pid) ->
     call(Pid, get_pwm).
+
+delay(Pid, Time) ->
+    cast(Pid, {delay, Time}).
 
 get_pwm_async(Pid) ->
     async_call(Pid, get_pwm).
@@ -123,7 +156,7 @@ init(U) ->
     [ command_(U,16#a0, 1) || _ <- lists:seq(1,5)],
 
     %% not needed ! gpio:set_direction(?GPIO_ERROR_READ, in),
-    %% gpio:set_interrupt(?GPIO_ERROR_READ, rising),
+    gpio:set_interrupt(?GPIO_ERROR_READ, rising),
     %% receive {gpio_interrupt, _Port, ?GPIO_ERROR_READ, 1} -> error!
     %% 
     gpio:clr(?GPIO_ERROR_RESET),
@@ -143,6 +176,9 @@ loop(U, T, T0, TransmitTmo, I, Mi, P0, P1, P2, P3) ->
 	    loop_(U,T,T0,TransmitTmo,I,Mi,NP0,NP1,NP2,NP3);
 	{'$cast', _From, {set_leds, L0, L1, L2, L3}} ->
 	    write_leds(U,L0,L1,L2,L3),
+	    loop_(U,T,T0,TransmitTmo,I,Mi,P0,P1,P2,P3);
+	{'$cast', _From, {delay,Time}} ->
+	    receive after Time -> ok end,
 	    loop_(U,T,T0,TransmitTmo,I,Mi,P0,P1,P2,P3);
 	{'$call', From, get_pwm} ->
 	    send_reply(From, {P0,P1,P2,P3}),
