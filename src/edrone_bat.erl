@@ -30,8 +30,8 @@ read() ->
 read_adc(Channel) when Channel =< 9 ->
     %% Chan = 2*Channel,
     i2c:smbus_write_byte_data(?BUS, 16#12, 16#20), %% START CONVERSION
-    L = i2c:smbus_read_byte_data(?BUS, 16#37),
-    U = i2c:smbus_read_byte_data(?BUS, 16#38),
+    {ok,L} = i2c:smbus_read_byte_data(?BUS, 16#37),
+    {ok,U} = i2c:smbus_read_byte_data(?BUS, 16#38),
     ((U bsl 8) bor L) bsr 6.
 
 get_value(Channel) ->

@@ -29,7 +29,7 @@
 
 
 init() ->
-    {ok,U} = uart:open(?MOTOR_UART, [{baud,115200}]),
+    {ok,U} = uart:open(?MOTOR_UART, [{baud,115200},{mode,binary}]),
     MotorPins = [?GPIO_M1,?GPIO_M2,?GPIO_M3,?GPIO_M4],
     gpio:init(?GPIO_ERROR_READ),
     gpio:init(?GPIO_ERROR_RESET),
@@ -43,7 +43,7 @@ init() ->
 
     [ begin
 	  gpio:set_direction(M, in),
-	  <<16#E0,16#00>> = command(U,16#e0,2),
+	  {ok,<<16#E0,16#00>>} = command(U,16#e0,2),
 	  command(U, Mi, 1),
 	  gpio:set_direction(M, high)
       end || {Mi,M} <- [{1,?GPIO_M1},{2,?GPIO_M2},{3,?GPIO_M3},{4,?GPIO_M4}]],
