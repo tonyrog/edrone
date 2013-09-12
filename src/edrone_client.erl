@@ -6,7 +6,7 @@
 %%% @end
 %%% Created : 11 Sep 2013 by Tony Rogvall <tony@rogvall.se>
 %%%-------------------------------------------------------------------
--module(edrone_channel).
+-module(edrone_client).
 
 -behaviour(gen_server).
 
