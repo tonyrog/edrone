@@ -1,0 +1,61 @@
+#!/bin/sh
+#
+#  in otp source directory:
+# ./otp_build configure --xcomp-conf=./xcomp/erl-xcomp-arm-linux-gnueabi.conf
+# ./otp_build boot -a
+# ./otp_build release -a ~/arm-unknown-linux-gnueabi-erl
+# cd ~/arm-unknown-linux-gnueabi-erl
+# make-minimal (this script)
+# cd ~/
+# tar cf ~/arm-unknown-linux-gnueabi-erl.tar ./arm-unknown-linux-gnueabi-erl
+#
+# ftp 192.168.1.1
+# >put arm-unknown-linux-gnueabi-erl.tar
+#
+# on target:
+# cd /data/video
+# tar xf arm-unknown-linux-gnueabi-erl.tar
+# rm  arm-unknown-linux-gnueabi-erl.tar
+# mv /data/video/arm-unknown-linux-gnueabi-erl /data/erlang
+# cd /data/erlang 
+# ./Install -minimal /data/erlang
+# /data/erlang/bin/erl (prompt ?)
+#
+#
+# Parrot 2
+#
+# Linux uclibc 2.6.32.9-g980dab2 #1 PREEMPT Tue Jul 30 10:40:52 CEST 2013 armv7l GNU/Linux
+#
+#
+#
+KEEP="stdlib kernel compiler"
+
+ORBER="orber cosEvent cosEventDomain cosFileTransfer \
+       cosNotification cosProperty cosTime cosTransactions"
+
+MEDIUM_REMOVE="\
+        $ORBER \
+	appmon pman asn1 \
+	common_test et reltool \
+	eunit runtime_tools gs sasl hipe snmp \
+	ic inets syntax_tools test_server \
+	megaco toolbar mnesia tools \
+	debugger observer tv \
+	dialyzer typer \
+	diameter os_mon webtool \
+	edoc otp_mibs    wx \
+	eldap parsetools  xmerl \
+	erl_docgen percept"
+
+REMOVE="erl_interface asn1 public_key erts public_key $MEDIUM_REMOVE"
+
+for file in $REMOVE;
+do 
+   rm -rf `echo lib/$file-*`
+done 
+
+for file in $KEEP;
+do 
+   rm -rf `echo lib/$file-*/src`
+   rm -rf `echo lib/$file-*/examples`
+done 

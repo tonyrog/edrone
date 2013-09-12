@@ -1,0 +1,7 @@
+{application, edrone,
+ [{description, "Erlang drone controller"},
+  {vsn, "1.0"},
+  {registered, []},
+  {env, []},
+  {applications,[kernel,stdlib]}
+  ]}.
