@@ -17,7 +17,7 @@ put uart.tgz
 EOF
 
 # Telnet time
-nc $DRONE_IP 21 <<EOF
+nc -t $DRONE_IP 23 <<EOF
 cd /data/erlang/lib
 rm -rf edrone gpio i2c uart
 tar xzf /data/video/gpio.tgz
