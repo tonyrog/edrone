@@ -28,4 +28,5 @@ tar czf uart.tgz --directory ../.. \
 tar czf edrone.tgz --directory ../.. \
     ./edrone/ebin/edrone.app \
     ./edrone/ebin/edrone_motor.beam \
+    ./edrone/ebin/edrone_navboard.beam \
     ./edrone/ebin/edrone_bat.beam
