@@ -15,7 +15,7 @@ and no password.
 
     ftp 192.168.1.1
     >put arm-unknown-linux-gnueabi-erl.tgz
-	>put libutil-2.13.so
+    >put libutil-2.13.so
 	
 Then telnet to the target
 
@@ -25,18 +25,28 @@ You will find the archive placed in /data/video, now
 unpack and install erlang
 
     cd /date/video
-    tar xf arm-unknown-linux-gnueabi-erl.tgz
+    tar xzf arm-unknown-linux-gnueabi-erl.tgz
     rm  arm-unknown-linux-gnueabi-erl.tgz
     mv /data/video/arm-unknown-linux-gnueabi-erl /data/erlang
 
 and the shared object libutil-2.13.so.
 
-    mv /data/libutil-2.13.so /lib
-	cd /lib
-	ln -s libutil-2.13.so libutil.so.1
+    mv /data/video/libutil-2.13.so /lib
+    cd /lib
+    ln -s libutil-2.13.so libutil.so.1
 
 Install and check for a prompt
 
     cd /data/erlang 
     ./Install -minimal /data/erlang
     /data/erlang/bin/erl
+
+
+Copy the additional erlang libraries to the drone:
+      sh transfer-libs.sh  
+
+This command will ftp edrone.tgz, gpio.tgz, i2c.tgz and uart.tgz to the edrone (192.168.1.1),
+and then install these packages under /data/erlang/lib
+
+
+
