@@ -12,8 +12,11 @@
 	 decode_nav_frame/1,
 	 flat_trim/1,
 	 flat_trim/3,
+	 read_raw_nav_frame/1,
+	 read_raw_nav_frame/2,
 	 read_nav_state/2,
-	 read_nav_state/3]).
+	 read_nav_state/3,
+	test/1]).
 
 -define(NAV_UART, "/dev/ttyO1").
 -define(NAV_GPIO, 132).
@@ -179,9 +182,9 @@ decode_nav_frame(Frame) ->
        AccX                 :16/little-integer,
        AccY                 :16/little-integer,
        AccZ                 :16/little-integer,
-       GyroX                :16/little-integer,
-       GyroY                :16/little-integer,
-       GyroZ                :16/little-integer,
+       GyroX                :16/little-integer-signed,
+       GyroY                :16/little-integer-signed,
+       GyroZ                :16/little-integer-signed,
        Unknown1             :16/little-integer, 
        Unknown2             :16/little-integer,
        UsEcho               :16/little-integer,
@@ -205,7 +208,8 @@ decode_nav_frame(Frame) ->
        MagZ                 :16/little-integer,
        _Unknown8             :16/little-integer
     >> = Frame,
-
+    io:format("Len(~p) Seq(~p) AccX(~p) AccY(~p) AccZ(~p) GyroX(~p) GyroY(~p) GyroZ(~p)~n",
+	      [ Length, SeqNr, AccX, AccY, AccZ, GyroX, GyroY, GyroZ ]),
     #nb_raw {
 	   length               = Length,
 	   seq_nr               = SeqNr,
@@ -385,3 +389,9 @@ init() ->
     uart:send(U, ?NAV_START_CMD),
     
     {ok, U}.
+
+
+test(U) ->
+    edrone_navboard:read_raw_nav_frame(U),
+    test(U).
+    
