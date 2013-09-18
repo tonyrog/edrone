@@ -55,7 +55,7 @@ set_pwm(Pid, P0, P1, P2, P3) ->
     cast(Pid, {set_pwm,P0,P1,P2,P3}).
 
 set_leds(Pid, L0, L1, L2, L3) ->
-    cast(Pid, {set_pwm,L0,L1,L2,L3}).
+    cast(Pid, {set_leds,L0,L1,L2,L3}).
 
 get_pwm(Pid) ->
     call(Pid, get_pwm).
