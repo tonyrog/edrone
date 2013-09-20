@@ -84,7 +84,7 @@
 -define(INDOOR_CONTROL_YAW, "control:indoor_control_yaw").
 -define(OUTDOOR_EULER_ANGLE_MAX, "control:outdoor_euler_angle_max").
 -define(OUTDOOR_CONTROL_VZ_MAX, "control:outdoor_control_vz_max").
--define(OUTDOOR_CONTROL_YAW, "outdoor_control:control_yaw").
+-define(OUTDOOR_CONTROL_YAW, "control:outdoor_control_yaw").
 
 -define(FLIGHT_ANIM, "control:flight_anim").
 -define(LEDS_ANIM,   "leds:leds_anim").
