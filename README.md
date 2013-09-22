@@ -9,8 +9,9 @@ installed on the AR drone 2.0 (not 1.0) it self.
 
 ## Install Erlang procedure
 
-Start with transfer the archive to the drone, use root as user
-and no password.
+After attaching the wifi network announced by the drone,
+start with transfer the erlang archive and the libutil file to the drone, 
+any user (like root) and no password is passed to ftp.
 
     ftp 192.168.1.1
     >put arm-unknown-linux-gnueabi-erl.tgz
@@ -57,7 +58,7 @@ Erlang on the drone is then started like:
 
     erl -loader inet -id drone -hosts 192.168.1.2 
 
-For a distributed add
+To make the drone node a distribute node then give the following arguments
     
     -sname drone -setcookie <cookie>
 
@@ -65,11 +66,10 @@ On the development a node with a bootserver must have been started
 
     erl -kernel start_boot_server true boot_server_slaves '[{192,168,1,1}]'
 
-The node started may be a distributed node as well by adding for example:
+The boot server node may also be a distributed node by giving the following argument to the command line:
 
     -sname devnode -setcookie <cookie>
 
-To the command line.
 
 Note the argument to boot_server_slaves, for some reason the manual is wrong
 here and this is the only accepted format.
