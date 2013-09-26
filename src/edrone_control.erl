@@ -18,19 +18,18 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
 
--export([flat_trim/0, enable/0, disable/0, move_to/3]).
+-export([flat_trim/0, enable/0, disable/0, move_to/1, move_to_height/1]).
 
 -define(SERVER, ?MODULE). 
 
 -record(st, { 
 	  uart = undefined,
 	  pwm_pid = undefined,
-	  flat_trim = undefined,
-	  current_pos = undefined,
-	  target_pos = undefined,
+	  nav_recv_ref = undefined,
+	  flat_trim = #flat_trim{},
+	  current_pos = #position {},
+	  target_pos = #position{},
 	  enabled = false,
-	  report_pid = undefined,
-	  report_arg = undefined,
 	  motor = {0,0,0,0}
 	 }).
 
@@ -79,9 +78,14 @@ enable() ->
 disable() ->
     gen_server:call(?MODULE, flat_trim).
 
-move_to(#position {} = Pos, CBFun, CBArg) ->
-    gen_server:call(?MODULE, {move_to, Pos, CBFun, CBArg}).
+%% Specifiy all positions.
+move_to(#position {} = Pos) ->
+    gen_server:call(?MODULE, {move_to, Pos}).
 
+%% Height. 
+move_to_height(CM) ->
+    gen_server:call(?MODULE, {move_to_height, CM}).
+    
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
@@ -109,14 +113,11 @@ handle_call(flat_trim, _From, St) ->
 handle_call(enable, _From, St) when St#st.flat_trim =:= undefined ->
     { reply, { error, no_flat_trim }, St };
 
-%% Don't enable twice.
-handle_call(enable, _From, St) when St#st.enabled =:= true ->
-    { reply, ok, St };
 
 %% Enable so that we get a message when a packet is read by uart.
-handle_call(enable, _From, St) when St#st.enabled =:= false ->
-    edrone_navboard:enable_frame_report(St#st.uart),
-    { reply, ok, St#st { enabled = true } };
+handle_call(enable, _From, St) ->
+    {ok, RecvRef } = edrone_navboard:enable_frame_report(St#st.uart),
+    { reply, ok, St#st { enabled = true, nav_recv_ref = RecvRef } };
 
 
 %% Disable the frame stream from the nav board
@@ -129,15 +130,11 @@ handle_call(disable, _From, St) when St#st.enabled =:= true->
 %% Once we have arrived at the new position, an "arrived" 
 %% message will be sent to the provided pid with the given arg
 %%
-handle_call({ move_to, 
-	      #position { } = TargetPos,
-	      ReportPid, %% The process ID to report to
-	      ReportArg  %% The argument to provide.
-	    }, _From, St) ->
-    { reply, ok, St#st { 
-		   target_pos = TargetPos,
-		   report_pid = ReportPid,
-		   report_arg = ReportArg } };
+handle_call({ move_to, #position { } = TargetPos}, _From, St) ->
+    { reply, ok, St#st { target_pos = TargetPos } };
+
+handle_call({ move_to_height, CM }, _From, St) ->
+    { reply, ok, St#st { target_pos = (St#st.target_pos)#position { height = CM } } };
 
 handle_call(_Request, _From, St) ->
     Reply = ok,
@@ -168,7 +165,7 @@ handle_cast(_Msg, St) ->
 %%                                   {stop, Reason, St}
 %% @end
 %%--------------------------------------------------------------------
-handle_info({uart, Uart, Data} , St) when Uart =:= St#st.uart ->
+handle_info({uart_async, Uart, RecvRef, Data} , St) when St#st.uart =:= Uart, St#st.nav_recv_ref =:= RecvRef ->
     NSt = case edrone_navboard:decode_nav_data(Data) of 
 	      { ok, #nav_frame{} = NavFrame } ->  
 		  %% FIXME: INSERT SIGNAL FILTER CALL HERE
@@ -195,18 +192,21 @@ handle_info({uart, Uart, Data} , St) when Uart =:= St#st.uart ->
 	  end,
     
     %% If we are still enabled, re-arm the uart to deliver the next frame.
-    if 
-	NSt#st.enabled =:= true -> edrone_navboard:enable_frame_report(NSt#st.uart);
-	true -> true
+    Ref = if 
+	NSt#st.enabled =:= true -> 
+		  {ok, R } = edrone_navboard:enable_frame_report(NSt#st.uart),
+		  R;
+	true -> undefined
     end,
-    { noreply, NSt };
+    { noreply, NSt#st { nav_recv_ref = Ref }};
 		
 	    
 handle_info({uart_error, Uart, Reason} , St) when Uart =:= St#st.uart ->
     io:format("UART ERROR: ~p~n", [ Reason ]),
     { noreply, St#st {enabled = false} };
 
-handle_info(_Info, St) ->
+handle_info(Info, St) ->
+    io:format("handle_info(~p)??: ~p~n", [ St, Info ]),
     {noreply, St}.
 
 %%--------------------------------------------------------------------
@@ -265,9 +265,16 @@ process_nav_state(#st{ current_pos = CP, target_pos = TP } = St,
 
     %% Just operate on climb rate right now. (cm/sec)
     ClippedHeight = min(NavState#nav_state.height, TgtHeight),
-    Throttle = 1 - (ClippedHeight / TgtHeight),
+    Throttle = case TgtHeight of 
+	0 -> 0.0;
+	0.0 -> 0.0;
+	_ -> 1 - (ClippedHeight / TgtHeight)
+    end,
 
-    St#st { motor = edrone_motor:set_pwm(St#st.pwm_pid, Throttle, Throttle, Throttle, Throttle), 
+%%    ClippedThrottle = edrone_motor:clip_pwm(Throttle, Throttle, Throttle, Throttle),
+    io:format("Throttle: ~p ~n", [ Throttle ]),
+    ClippedThrottle = edrone_motor:set_pwm(St#st.pwm_pid, Throttle, Throttle, Throttle, Throttle),
+    St#st { motor = ClippedThrottle, 
 	    current_pos = CP#position { height = NavState#nav_state.height} }.
 
 

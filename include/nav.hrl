@@ -106,5 +106,20 @@
 	  unknown_8 ::integer()            %% 
 	 }).
 
+%% Measured offsets for accelrometers gyros and compass while the drone
+%% is flat and stationary.
+%% Used to calculate absolute values while the drone is in motion.
+-record(flat_trim, {
+	  ax_offset = 2048.0 :: float(),    %% X accelerometer offset with horizontal drone
+	  ay_offset = 2048.0 :: float(),    %% Y accelerometer offset with horizontal drone
+	  az_offset = 2048.0 :: float(),    %% Z accelerometer offset with horizontal drone
+	  gx_offset = 0.0    :: float(),    %% X gyro offset with horizontal drone
+	  gy_offset = 0.0    :: float(),    %% Y gyro offset with horizontal drone
+	  gz_offset = 0.0    :: float(),    %% Z gyro offset with horizontal drone
+	  mx_offset = 0.0    :: float(),    %% X compass offset (always 0)
+	  my_offset = 0.0    :: float(),    %% Y compass offset (always 0)
+	  mz_offset = 0.0    :: float()     %% Z compass offset (always 0)
+	 }).
+
 %% One earth gravity, in m/s^2
 -define(G, 9.80665).

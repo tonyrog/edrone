@@ -12,11 +12,9 @@
 %% ===================================================================
 
 start(_StartType, _StartArgs) ->
-    io:format("start~n"),
     edrone_sup:start_link().
 
-start_phase(Ph, _, _) ->
-    io:format("start_phase(~p)~n", [ Ph ]),
+start_phase(_, _, _) ->
     ok.
 
 stop(_State) ->

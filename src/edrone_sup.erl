@@ -16,7 +16,6 @@
 %% ===================================================================
 
 start_link() ->
-    io:format("start_link()~n"),
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 %% ===================================================================
@@ -24,7 +23,6 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
-    io:format("edrone_sup: init()~n"),
     {ok, { {one_for_one, 5, 10},
 	   [
 	    ?CHILD(edrone_control, worker)

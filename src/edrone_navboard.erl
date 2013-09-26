@@ -56,21 +56,6 @@
 -define(SONAR_UNITS_PER_CM, 30).
 
 
-%% Measured offsets for accelrometers gyros and compass while the drone
-%% is flat and stationary.
-%% Used to calculate absolute values while the drone is in motion.
--record(flat_trim, {
-	  ax_offset = 2048.0 :: float(),    %% X accelerometer offset with horizontal drone
-	  ay_offset = 2048.0 :: float(),    %% Y accelerometer offset with horizontal drone
-	  az_offset = 2048.0 :: float(),    %% Z accelerometer offset with horizontal drone
-	  gx_offset = 0.0    :: float(),    %% X gyro offset with horizontal drone
-	  gy_offset = 0.0    :: float(),    %% Y gyro offset with horizontal drone
-	  gz_offset = 0.0    :: float(),    %% Z gyro offset with horizontal drone
-	  mx_offset = 0.0    :: float(),    %% X compass offset (always 0)
-	  my_offset = 0.0    :: float(),    %% Y compass offset (always 0)
-	  mz_offset = 0.0    :: float()     %% Z compass offset (always 0)
-	 }).
-
 %% Measurements made during flat trimming process.
 -record(calibration, {
 	  count = 0          :: integer(),  %% Numbber of samples made during trim
@@ -193,7 +178,7 @@ process_nav_frame(#nav_frame {} = Frame, #flat_trim {} = FT) ->
 		mz = (Frame#nav_frame.mag_z - FT#flat_trim.mz_offset) * ?MAG_DEG_PER_UNIT,
 
 		%% FIXME: Break us_echo up into us_echo_new (bit 15) and us_echo (bit 0-14).
-		height = Frame#nav_frame.us_echo,
+		height = Frame#nav_frame.us_echo / 30 ,
 		new_height = case Frame#nav_frame.us_echo_new of
 				 1 -> true;
 				 0 -> false
@@ -393,7 +378,9 @@ flat_trim(Uart, Deviation, Tolerance) ->
 
 %% Enable a single frame report
 enable_frame_report(Uart) ->
-    uart:setopt(Uart, [{packet, {size, ?NAV_FRAME_SIZE}, { active, once }}]).
+%%    DOES NOT WORK! Does not send message to inbox.
+%%    uart:setopts(Uart, [{packet, {size, ?NAV_FRAME_SIZE}, { active, once }}]),
+    uart:async_recv(Uart, ?NAV_FRAME_SIZE, 100).
 
 init() ->
     %% Open the uart with re-arm
