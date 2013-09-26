@@ -9,14 +9,14 @@
 -module(edrone_navboard).
 
 -export([init/0,
-	 decode_nav_frame/1,
 	 flat_trim/1,
 	 flat_trim/3,
-	 read_raw_nav_frame/1,
-	 read_raw_nav_frame/2,
-	 read_nav_state/2,
-	 read_nav_state/3,
-	test/1]).
+	 sync_stream/2,
+	 enable_frame_report/1,
+	 decode_nav_data/1,
+	 process_nav_frame/2]).
+
+-include("nav.hrl").
 
 -define(NAV_UART, "/dev/ttyO1").
 -define(CALIBRATE_TIMEOUT, 500).
@@ -48,6 +48,13 @@
 %% Number of degrees per compass unit.
 %% 360 / 65537
 -define(MAG_DEG_PER_UNIT, 0.0054930802447472424). 
+
+%% Number of sonar units per cm.
+-define(SONAR_CM_PER_UNITS, 0.000340)
+
+%% Cm per sonar unit.
+-define(SONAR_UNITS_PER_CM, 30).
+
 
 %% Measured offsets for accelrometers gyros and compass while the drone
 %% is flat and stationary.
@@ -81,112 +88,20 @@
 	  gz_sqr = 0.0       :: float()     %% Square of all Z gyro samples.
 }).
 
--record(nb_state, {
-
-	  timestamp = 0             :: integer(),  %% Timestamp in monotonic microseconds
-
-	  ax = 0.0                  :: float(),    %% X-axis acceleration (G) front facing up is positive
-	  ay = 0.0                  :: float(),    %% Y-axis acceleration (G) left facing up is positive
-	  az = 0.0                  :: float(),    %% Z-axis acceleration (G) top facing up is positive
-
-	  gx = 0.0                  :: float(),    %% X-axis gyro (deg/sec) roll right is positive
-	  gy = 0.0                  :: float(),    %% Y-axis gyro (deg/sec) pitch down positive
-	  gz = 0.0                  :: float(),    %% Z-axis gyro (deg/sec) yaw left is positive
-
-	  height = 0                :: float(),    %% height above ground (cm)
-	  new_height = false        :: boolean(),  %% true if new height sample, else false.
-
-	  mx = 0.0                  :: float(),    %% X plane compass (This is the one we want)
-	  my = 0.0                  :: float(),    %% Y plane compass (Not sure what to use this for)
-	  mz = 0.0                  :: float()     %% Z plane compass (Not sure what to use this for)
-	 }).
-
-%%
-%% Decoded raw record,  as it is received from the nav board
-%%
--record(nb_raw, {
-	  length  ::integer(),              %%  length
-	  seq_nr  ::integer(),              %%  Sequence number for the frame
-	  acc_x   ::integer(),              %%  Raw X accelerometer (10 bit, multiplied by 4)
-	  acc_y   ::integer(),              %%  Raw Y accelerometer (10 bit, multiplied by 4)
-	  acc_z   ::integer(),              %%  Raw Z accelerometer (10 bit, multiplied by 4)
-	  gyro_x  ::integer(),              %%  Raw X gyro (16 bit).
-	  gyro_y  ::integer(),              %%  Raw Y gyro (16 bit).
-	  gyro_z  ::integer(),              %%  Raw Z gyro (16 bit).
-
-	  unknown_1  ::integer(),           %% unknown_ 1 (16 bit)
-	  unknown_2  ::integer(),           %% unknown_ 2 (16 bit)
-
-	  us_echo_new  ::integer(),         %% 1 bit - New measurement or incremental(?) measurement
-	  us_echo  ::integer(),             %% 15 bit - first echo. Value 30 = 1cm. min value: 784 = 26cm
-
-	  us_echo_start  ::integer(),         %% Array with starts of echos 
-	  %% (8 array values @ 25Hz, 9 values @ 22.22Hz)
-
-	  us_echo_end  ::integer(),           %% Array with ends of echos 
-	  %% (8 array values @ 25Hz, 9 values @ 22.22Hz)
-
-	  us_association_echo  ::integer(),   %% Ultrasonic parameter -- 
-	  %% echo number starting with 0. max value 3758. 
-	  %% examples: 0,1,2,3,4,5,6,7  ; 0,1,2,3,4,86,6,9
-
-	  us_distance_echo  ::integer(),      %%  Ultrasonic parameter -- no clear pattern
-	  us_courbe_temps  ::integer(),       %%  Ultrasonic parameter -- 
-	  %% counts up from 0 to approx 24346 in 192 sample cycles 
-	  %% of which 12 cylces have value 0
-
-	  us_courbe_value  ::integer(),       %% Ultrasonic parameter 
-	  %% value between 0 and 4000, no clear pattern. 
-	  %% 192 sample cycles of which 12 cylces have value 0
-
-	  unknown_3  ::integer(),            %% unknown_ +0x1E Checksum = sum of all values 
-	  %% except checksum (22 values)
-
-	  us_number_echo  ::integer(),        %%  Number of selected echo for height measurement (1,2,3)
-	  us_sum_echo_1  ::integer(),        %%
-	  us_sum_echo_2  ::integer(),        %%
-	  unknown_4  ::integer(),            %% unknown +0x26 Ultrasonic parameter -- no clear pattern
-	  us_initialized  ::integer(),       %% always 1
-	  unknown_5  ::integer(),            %%
-	  unknown_6  ::integer(),            %%
-	  unknown_7  ::integer(),            %%
-	  mag_x  ::integer(),                %% Magnetic X (This is the compass we want)
-	  mag_y  ::integer(),                %% Magnetic Y
-	  mag_z  ::integer(),                %% Magnetic Z
-
-	  unknown_8 ::integer()            %% 
-	 }).
-
-
-
-read_raw_nav_frame(Uart) ->
-    read_raw_nav_frame(Uart,infinity).
 
 read_raw_nav_frame(Uart, Timeout) ->
     case uart:recv(Uart, ?NAV_FRAME_SIZE, Timeout) of
-	{ok, Frame} -> decode_nav_frame(Frame);
+	{ok, Frame} -> decode_nav_data(Frame);
 	Other -> Other
     end.
 
-%% Read a nav frame and convert it to actual values.
-%% Use FlatTrim as offset values to get the absolute values
-%% right.
-read_nav_state(Uart, #flat_trim {} = FlatTrim) ->
-    read_nav_state(Uart,infinity, FlatTrim).
-
-read_nav_state(Uart, Timeout, #flat_trim {} = FlatTrim) ->
-    case read_raw_nav_frame(Uart, Timeout) of
-	{ ok, Frame } -> { ok,  nav_frame_to_state(Frame, FlatTrim) };
-	Other -> Other
-    end.
-	
 %% FIXME: Unknown3 & 0x1E contains sum of all values except checksum. 
 %%        For now, we just check that length is 58.
 validate_frame(<< (?NAV_FRAME_SIZE-2): 16/little-integer, _/binary >>) -> true;
 validate_frame(_) -> false.
     
 
-decode_nav_frame(FrameBin) ->
+decode_nav_data(Data) ->
     << Length               :16/little-integer,
        SeqNr                :16/little-integer,
        AccX                 :16/little-integer,
@@ -217,15 +132,15 @@ decode_nav_frame(FrameBin) ->
        MagY                 :16/little-integer,
        MagZ                 :16/little-integer,
        _Unknown8             :16/little-integer
-    >> = FrameBin,
+    >> = Data,
 
     %% io:format("L(~5B) S(~5B) AX(~5B) AY(~5B) AZ(~5B) GX(~6B) GY(~6B) GZ(~6B) UN(~1B) UE(~6B) " ++
     %% 		  "MX(~6B), MY(~6B) MZ(~6B)~n",
     %% 	      [ Length, SeqNr, AccX, AccY, AccZ, GyroX, GyroY, GyroZ, 
     %% 		UsEcho bsr 15, UsEcho band 16#7FFF, MagX, MagY, MagZ ]),
 
-    case validate_frame(FrameBin) of
-	true -> { ok, #nb_raw {
+    case validate_frame(Data) of
+	true -> { ok, #nav_frame {
 		 length               = Length,
 		 seq_nr               = SeqNr,
 		 acc_x                = AccX,
@@ -261,29 +176,29 @@ decode_nav_frame(FrameBin) ->
 	_ -> { error, checksum }
     end.
 
-nav_frame_to_state(#nb_raw {} = F, #flat_trim {} = FT) ->
-    #nb_state {
-	       timestamp = edrone_lib:timestamp(),
-	       ax = -acc_value_to_g(F#nb_raw.acc_x - FT#flat_trim.ax_offset),
-	       ay = acc_value_to_g(F#nb_raw.acc_y - FT#flat_trim.ay_offset),
-	       az = acc_value_to_g(F#nb_raw.acc_z - FT#flat_trim.az_offset),
 
-	       gx = (F#nb_raw.gyro_x - FT#flat_trim.gx_offset) * ?GYRO_DEG_PER_UNIT,
-	       gy = (F#nb_raw.gyro_y - FT#flat_trim.gy_offset) * ?GYRO_DEG_PER_UNIT,
-	       gz = (F#nb_raw.gyro_z - FT#flat_trim.gz_offset) * ?GYRO_DEG_PER_UNIT,
-	       
-	       mx = (F#nb_raw.mag_x - FT#flat_trim.mx_offset) * ?MAG_DEG_PER_UNIT,
-	       my = (F#nb_raw.mag_y - FT#flat_trim.my_offset) * ?MAG_DEG_PER_UNIT,
-	       mz = (F#nb_raw.mag_z - FT#flat_trim.mz_offset) * ?MAG_DEG_PER_UNIT,
-	       
-	       %% FIXME: Break us_echo up into us_echo_new (bit 15) and us_echo (bit 0-14).
-	       height = F#nb_raw.us_echo,
-	       new_height = case F#nb_raw.us_echo_new of
-				1 -> true;
-				0 -> false
-			    end
+process_nav_frame(#nav_frame {} = Frame, #flat_trim {} = FT) ->
+    #nav_state {
+		timestamp = edrone_lib:timestamp(),
+		ax = -acc_value_to_g(Frame#nav_frame.acc_x - FT#flat_trim.ax_offset),
+		ay = acc_value_to_g(Frame#nav_frame.acc_y - FT#flat_trim.ay_offset),
+		az = acc_value_to_g(Frame#nav_frame.acc_z - FT#flat_trim.az_offset),
+
+		gx = (Frame#nav_frame.gyro_x - FT#flat_trim.gx_offset) * ?GYRO_DEG_PER_UNIT,
+		gy = (Frame#nav_frame.gyro_y - FT#flat_trim.gy_offset) * ?GYRO_DEG_PER_UNIT,
+		gz = (Frame#nav_frame.gyro_z - FT#flat_trim.gz_offset) * ?GYRO_DEG_PER_UNIT,
+
+		mx = (Frame#nav_frame.mag_x - FT#flat_trim.mx_offset) * ?MAG_DEG_PER_UNIT,
+		my = (Frame#nav_frame.mag_y - FT#flat_trim.my_offset) * ?MAG_DEG_PER_UNIT,
+		mz = (Frame#nav_frame.mag_z - FT#flat_trim.mz_offset) * ?MAG_DEG_PER_UNIT,
+
+		%% FIXME: Break us_echo up into us_echo_new (bit 15) and us_echo (bit 0-14).
+		height = Frame#nav_frame.us_echo,
+		new_height = case Frame#nav_frame.us_echo_new of
+				 1 -> true;
+				 0 -> false
+			     end
 	      }.
-
 
 
 
@@ -339,7 +254,6 @@ calibrate(Uart, Iterations, Timeout) ->
 	ok -> calibrate_(Uart, #calibration {}, Iterations, Timeout)
     end.
 	     
-
 calibrate_(_Uart, #calibration{ } = Calibration, 0, _) ->
     {ok, Calibration };
 
@@ -348,21 +262,21 @@ calibrate_(Uart, #calibration{ } = C, IterationsLeft, Timeout) ->
 	{ ok, Fr } ->
 	    calibrate_(Uart, #calibration {
 			count = C#calibration.count + 1,
-			ax_sum = C#calibration.ax_sum + Fr#nb_raw.acc_x,
-			ay_sum = C#calibration.ay_sum + Fr#nb_raw.acc_y,
-			az_sum = C#calibration.az_sum + Fr#nb_raw.acc_z,
+			ax_sum = C#calibration.ax_sum + Fr#nav_frame.acc_x,
+			ay_sum = C#calibration.ay_sum + Fr#nav_frame.acc_y,
+			az_sum = C#calibration.az_sum + Fr#nav_frame.acc_z,
 
-			gx_sum = C#calibration.gx_sum + Fr#nb_raw.gyro_x,
-			gy_sum = C#calibration.gy_sum + Fr#nb_raw.gyro_y,
-			gz_sum = C#calibration.gz_sum + Fr#nb_raw.gyro_z,
+			gx_sum = C#calibration.gx_sum + Fr#nav_frame.gyro_x,
+			gy_sum = C#calibration.gy_sum + Fr#nav_frame.gyro_y,
+			gz_sum = C#calibration.gz_sum + Fr#nav_frame.gyro_z,
 
-			ax_sqr = C#calibration.ax_sqr + Fr#nb_raw.acc_x * Fr#nb_raw.acc_x,
-			ay_sqr = C#calibration.ay_sqr + Fr#nb_raw.acc_y * Fr#nb_raw.acc_y,
-			az_sqr = C#calibration.az_sqr + Fr#nb_raw.acc_z * Fr#nb_raw.acc_z ,
+			ax_sqr = C#calibration.ax_sqr + Fr#nav_frame.acc_x * Fr#nav_frame.acc_x,
+			ay_sqr = C#calibration.ay_sqr + Fr#nav_frame.acc_y * Fr#nav_frame.acc_y,
+			az_sqr = C#calibration.az_sqr + Fr#nav_frame.acc_z * Fr#nav_frame.acc_z ,
 
-			gx_sqr = C#calibration.gx_sqr + Fr#nb_raw.gyro_x * Fr#nb_raw.gyro_x,
-			gy_sqr = C#calibration.gy_sqr + Fr#nb_raw.gyro_y * Fr#nb_raw.gyro_y,
-			gz_sqr = C#calibration.gz_sqr + Fr#nb_raw.gyro_z * Fr#nb_raw.gyro_z
+			gx_sqr = C#calibration.gx_sqr + Fr#nav_frame.gyro_x * Fr#nav_frame.gyro_x,
+			gy_sqr = C#calibration.gy_sqr + Fr#nav_frame.gyro_y * Fr#nav_frame.gyro_y,
+			gz_sqr = C#calibration.gz_sqr + Fr#nav_frame.gyro_z * Fr#nav_frame.gyro_z
 		       }, IterationsLeft - 1, Timeout);
 
 	%% Failed to read frame. Should not happen since we are synced.
@@ -413,7 +327,16 @@ validate_tolerances(AxAvg, AyAvg, AzAvg, Tolerance) ->
         
 
 flat_trim(Uart) ->
-    flat_trim(Uart, ?DEF_DEVIATION, ?DEF_TOLERANCE).
+    case flat_trim(Uart, ?DEF_DEVIATION, ?DEF_TOLERANCE) of 
+	{ ok, FT } ->
+	    io:format("FlatTrim: ax_off(~p) ay_off(~p) az_off(~p) gx_off(~p) gy_off(~p) gz_off(~p)~n",
+		      [ FT#flat_trim.ax_offset, FT#flat_trim.ay_offset, FT#flat_trim.az_offset, 
+			FT#flat_trim.gx_offset, FT#flat_trim.gy_offset, FT#flat_trim.gz_offset]),
+	    {ok, FT};
+	Err -> Err
+    end.
+		
+
 
 flat_trim(Uart, Deviation, Tolerance) ->
     case calibrate(Uart, ?CALIBRATE_ITERATIONS, ?CALIBRATE_TIMEOUT) of
@@ -468,8 +391,14 @@ flat_trim(Uart, Deviation, Tolerance) ->
     end.
 
 
+%% Enable a single frame report
+enable_frame_report(Uart) ->
+    uart:setopt(Uart, [{packet, {size, ?NAV_FRAME_SIZE}, { active, once }}]).
+
 init() ->
-    {ok,U} = uart:open(?NAV_UART, [{baud,460800},{mode,binary}]),
+    %% Open the uart with re-arm
+    {ok,U} = uart:open(?NAV_UART, [{baud,460800},
+				   {mode,binary}]),
     %% set /MCLR pin
     gpio:init(?NAV_GPIO),
     gpio:set_direction(?NAV_GPIO, low),
@@ -479,23 +408,3 @@ init() ->
     uart:send(U, ?NAV_START_CMD),
     
     {ok, U}.
-
-
-test(U) ->
-    {ok, FT} = flat_trim(U),
-    io:format("FlatTrim: ax_off(~p) ay_off(~p) az_off(~p) gx_off(~p) gy_off(~p) gz_off(~p)~n",
-	      [ FT#flat_trim.ax_offset, FT#flat_trim.ay_offset, FT#flat_trim.az_offset, 
-		FT#flat_trim.gx_offset, FT#flat_trim.gy_offset, FT#flat_trim.gz_offset]),
-    test_(U, FT).
-    
-test_(U, FT) ->
-    {ok, St} = edrone_navboard:read_nav_state(U, FT),
-    io:format("nav: Acc(g)={x(~-10.4f) y(~-10.4f) z(~-10.4f)} Gyro(deg)={x(~-10.4f) y(~-10.4f) z(~-10.4f)} Height(cm)=~B Compass(deg)={x(~-10.4f) y(~-10.4f) z(~-10.4f)}~n", 
-	      [ St#nb_state.ax, St#nb_state.ay, St#nb_state.az, 
-		St#nb_state.gx, St#nb_state.gy, St#nb_state.gz, 
-		St#nb_state.height,
-		St#nb_state.mx, St#nb_state.my, St#nb_state.mz ]),
-
-    test_(U, FT).
-    
-

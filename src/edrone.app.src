@@ -3,5 +3,7 @@
   {vsn, "1.0"},
   {registered, []},
   {env, []},
-  {applications,[kernel,stdlib]}
+  {mod, {edrone_app,[]} },
+  {start_phases,[{ph1,[]},{ph2,[]},{ph3,[]}]},
+  {applications,[kernel,stdlib, gpio,uart]}
   ]}.
