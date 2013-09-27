@@ -10,8 +10,8 @@
 	  gy = 0.0                  :: float(),    %% Y-axis gyro (deg/sec) pitch down positive
 	  gz = 0.0                  :: float(),    %% Z-axis gyro (deg/sec) yaw left is positive
 
-	  height = 0                :: float(),    %% height above ground (cm)
-	  new_height = false        :: boolean(),  %% true if new height sample, else false.
+	  alt = 0                   :: float(),    %% altitude above ground (cm)
+	  new_alt = false           :: boolean(),  %% true if new altitude sample, else false.
 
 	  mx = 0.0                  :: float(),    %% X plane compass (This is the one we want)
 	  my = 0.0                  :: float(),    %% Y plane compass (Not sure what to use this for)
@@ -26,7 +26,7 @@
 %% x > 0 -> Drone is right of its starting point.(cm)
 %% y < 0 -> Drone is behind its starting point. (cm)
 %% y > 0 -> Drone is in front of its starting point. (cm)
-%% height = Height (cm). Continuously calibrated against sonar to manage terrain.
+%% altitude = Altitude (cm). Continuously calibrated against sonar to manage terrain.
 %%
 %% yaw -> Heading, in offset from absolute north (-1.0 to 1.0). 0.0 = start heading. mirrored heading.
 %% pitch -> Nose Pitch, in from  flat (-1.0 to 1.0).  0.0 = flat. -1.0, 1.0 = inverted
@@ -37,17 +37,21 @@
 %% climb -> Speed (cm/sec) that drone is climbing (positive) or falling (negative)
 -record(position, {
 	  timestamp = 0   :: integer(),   %% Timestamp of position
-	  x = 0.0         :: float(),    %% Lateral position, relative start
-	  y = 0.0         :: float(),    %% Longitudinal position, relative startg
-	  height = 0.0    :: float(),    %% Height position, relative sonar ground
-	  yaw = 0.0       :: float(),   %% Yaw
-	  pitch = 0.0     :: float(), %% Pitch
-	  roll = 0.0      :: float(),  %% Roll
-	  heading = 0.0   :: float(), 
-	  direction = 0.0 :: float(),  
-	  speed = 0.0     :: float(),  
-	  climb = 0.0     :: float(),  
-	  last_st         :: #nav_state{}  %% Last known state.
+	  x = 0.0         :: float(),     %% Lateral position, cm relative start position
+	  y = 0.0         :: float(),     %% Longitudinal position, cm relative start position
+	  alt = 0.0       :: float(),     %% Altitude position, relative sonar ground
+	  yaw = 0.0       :: float(),     %% Yaw deg.
+	  pitch = 0.0     :: float(),     %% Pitch deg.
+	  roll = 0.0      :: float()     %% Roll deg.
+	 }).
+
+-record(movement, {
+	  x_spd = 0.0         :: float(),  %% Speed in the x-axis cm/sec
+	  y_spd = 0.0         :: float(),  %% Speed in the y-axis cm/sec
+	  alt_spd = 0.0       :: float(),  %% Speed in the z-axis cm/sec
+	  roll_spd = 0.0      :: float(),  %% Roll speed, deg/sec
+	  pitch_spd = 0.0     :: float(),  %% Pitch speed, deg/sec
+	  yaw_spd = 0.0       :: float()   %% Yaw speed, deg/sec
 	 }).
 
 %%
@@ -91,7 +95,7 @@
 	  unknown_3  ::integer(),            %% unknown_ +0x1E Checksum = sum of all values 
 	  %% except checksum (22 values)
 
-	  us_number_echo  ::integer(),        %%  Number of selected echo for height measurement (1,2,3)
+	  us_number_echo  ::integer(),        %%  Number of selected echo for altitude measurement (1,2,3)
 	  us_sum_echo_1  ::integer(),        %%
 	  us_sum_echo_2  ::integer(),        %%
 	  unknown_4  ::integer(),            %% unknown +0x26 Ultrasonic parameter -- no clear pattern

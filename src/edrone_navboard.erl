@@ -34,13 +34,19 @@
 %% Number of Gs per accelerometer unit
 -define(ACC_G_PER_UNIT,0.001953125 ). %% Number of accelerometer increments per G.
 
+%% 12 bit accelerometer data.
+-define(ACC_MIN, 0).
+-define(ACC_MAX, 16#1000).
+-define(ACC_SPAN, (?ACC_MAX - ?ACC_MIN)).
 %% Number of degrees per gyro rotational increment
 %%
 %% Max raw value read from gyro: 32767
 %% Max number of degrees reported by gyro: 2000
 %% DEG_GYRO_CONST = 32767 / 2000
 -define(GYRO_DEG_PER_UNIT, 0.061037018951994385). 
-
+-define(GYRO_MAX, 32767).  
+-define(GYRO_MIN, -32767).
+-define(GYRO_SPAN, (?GYRO_MAX - ?GYRO_MIN)).
 %% Number of compass units per degree
 %% 65537 / 360
 -define(MAG_UNITS_PER_DEG, 182.04722222). 
@@ -162,28 +168,29 @@ decode_nav_data(Data) ->
     end.
 
 
+
 process_nav_frame(#nav_frame {} = Frame, #flat_trim {} = FT) ->
     #nav_state {
-		timestamp = edrone_lib:timestamp(),
-		ax = -acc_value_to_g(Frame#nav_frame.acc_x - FT#flat_trim.ax_offset),
-		ay = acc_value_to_g(Frame#nav_frame.acc_y - FT#flat_trim.ay_offset),
-		az = acc_value_to_g(Frame#nav_frame.acc_z - FT#flat_trim.az_offset),
+	      timestamp = edrone_lib:timestamp(),
+	      ax = cap(Frame#nav_frame.acc_x / ?ACC_SPAN + (?ACC_SPAN / 2 - FT#flat_trim.ax_offset) / ?ACC_SPAN, 0.0, 1.0) * 2 - 1,
+	      ay = cap(Frame#nav_frame.acc_y / ?ACC_SPAN + (?ACC_SPAN / 2 - FT#flat_trim.ay_offset) / ?ACC_SPAN, 0.0, 1.0) * 2 - 1,
+	      az = cap(Frame#nav_frame.acc_z / ?ACC_SPAN + (?ACC_SPAN / 2 - FT#flat_trim.az_offset) / ?ACC_SPAN, 0.0, 1.0) * 2 - 1,
 
-		gx = (Frame#nav_frame.gyro_x - FT#flat_trim.gx_offset) * ?GYRO_DEG_PER_UNIT,
-		gy = (Frame#nav_frame.gyro_y - FT#flat_trim.gy_offset) * ?GYRO_DEG_PER_UNIT,
-		gz = (Frame#nav_frame.gyro_z - FT#flat_trim.gz_offset) * ?GYRO_DEG_PER_UNIT,
+	      gx = cap((Frame#nav_frame.gyro_x + ?GYRO_MAX) / ?GYRO_SPAN + (?GYRO_SPAN / 2 - (FT#flat_trim.gx_offset + ?GYRO_MAX)) / ?GYRO_SPAN, 0.0, 1.0) * 2 - 1,
+	      gy = cap((Frame#nav_frame.gyro_y + ?GYRO_MAX) / ?GYRO_SPAN + (?GYRO_SPAN / 2 - (FT#flat_trim.gy_offset + ?GYRO_MAX)) / ?GYRO_SPAN, 0.0, 1.0) * 2 - 1,
+	      gz = cap((Frame#nav_frame.gyro_z + ?GYRO_MAX) / ?GYRO_SPAN + (?GYRO_SPAN / 2 - (FT#flat_trim.gz_offset + ?GYRO_MAX)) / ?GYRO_SPAN, 0.0, 1.0) * 2 - 1,
+	       
+	      mx = Frame#nav_frame.mag_x / 1, %% Compass is hosed
+	      my = Frame#nav_frame.mag_y / 1, %% Compass is hosed
+	      mz = Frame#nav_frame.mag_z / 1, %% Compass is hosed
 
-		mx = (Frame#nav_frame.mag_x - FT#flat_trim.mx_offset) * ?MAG_DEG_PER_UNIT,
-		my = (Frame#nav_frame.mag_y - FT#flat_trim.my_offset) * ?MAG_DEG_PER_UNIT,
-		mz = (Frame#nav_frame.mag_z - FT#flat_trim.mz_offset) * ?MAG_DEG_PER_UNIT,
-
-		%% FIXME: Break us_echo up into us_echo_new (bit 15) and us_echo (bit 0-14).
-		height = Frame#nav_frame.us_echo / 30 ,
-		new_height = case Frame#nav_frame.us_echo_new of
-				 1 -> true;
-				 0 -> false
-			     end
-	      }.
+	      %% FIXME: Break us_echo up into us_echo_new (bit 15) and us_echo (bit 0-14).
+	      alt = Frame#nav_frame.us_echo / 30 ,
+	      new_alt = case Frame#nav_frame.us_echo_new of
+			    1 -> true;
+			    0 -> false
+			end
+	     }.
 
 
 
@@ -293,8 +300,8 @@ validate_deviation([H | T], Deviation) ->
     validate_deviation(T, Deviation).
 
 %% Convert raw accelerometer value to G (as in gravity).
-acc_value_to_g(Value) ->
-    Value / ?ACC_UNITS_PER_G.
+%% acc_value_to_g(Value) ->
+%%     Value / ?ACC_UNITS_PER_G.
 
 %% Check that we are within tolerances of a flat trim for accelerometers
 validate_tolerances(AxAvg, AyAvg, AzAvg, Tolerance) ->
@@ -360,7 +367,7 @@ flat_trim(Uart, Deviation, Tolerance) ->
 		    {ok, #flat_trim {
 		       ax_offset = AxAvg,
 		       ay_offset = AyAvg,
-		       az_offset = AzAvg - ?ACC_UNITS_PER_G,
+		       az_offset = AzAvg,
 		       gx_offset = GxAvg,
 		       gy_offset = GyAvg,
 		       gz_offset = GzAvg,
@@ -395,3 +402,6 @@ init() ->
     uart:send(U, ?NAV_START_CMD),
     
     {ok, U}.
+
+cap(Val, Min, Max) ->
+    max(min(Val, Max), Min).

@@ -15,7 +15,7 @@
 -export([open/0, init/1]).
 -export([command_/3]).
 -export([write_pwm/5, write_leds/5, 
-	 run_pwm/5, cvt_pwm/4, clip_pwm/4]).
+	 run_pwm/5]).
 -export([delay/2]).
 
 %% test loops
@@ -83,10 +83,11 @@ start() ->
       end).
 
 set_pwm(Pid, M0, M1, M2, M3) ->
-    { P0, P1, P2, P3 } = cvt_pwm(M0,M1, M2, M3),
-    cast(Pid, {set_pwm,P0,P1,P2,P3}),
+    ClippedPWM = clip_pwm(M0, M1, M2, M3),
+    { P0, P1, P2, P3 } = cvt_pwm(ClippedPWM),
+    cast(Pid, {set_pwm, P0,P1,P2,P3}),
  
-    { P0, P1, P2, P3 }. %% Will be clipped to 0.0-1.0 interval
+    ClippedPWM. %% Will be clipped to 0.0-1.0 interval
     
 
 set_leds(Pid, L0, L1, L2, L3) ->
@@ -228,16 +229,15 @@ clip_pwm(M0, M1, M2, M3) ->
       min(max(0.0, M2), 1.0),
       min(max(0.0, M3), 1.0) }.
 
-cvt_pwm(M0, M1, M2, M3) ->
-    { V0, V1, V2, V3 } = clip_pwm(M0, M1, M2, M3),
-
-    { trunc(?PWM_MIN + V0*(?PWM_MAX - ?PWM_MIN)),
-      trunc(?PWM_MIN + V1*(?PWM_MAX - ?PWM_MIN)),
-      trunc(?PWM_MIN + V2*(?PWM_MAX - ?PWM_MIN)),
-      trunc(?PWM_MIN + V3*(?PWM_MAX - ?PWM_MIN)) }.
+cvt_pwm({M0, M1, M2, M3}) ->
+    { trunc(?PWM_MIN + M0*(?PWM_MAX - ?PWM_MIN)),
+      trunc(?PWM_MIN + M1*(?PWM_MAX - ?PWM_MIN)),
+      trunc(?PWM_MIN + M2*(?PWM_MAX - ?PWM_MIN)),
+      trunc(?PWM_MIN + M3*(?PWM_MAX - ?PWM_MIN)) }.
 
 run_pwm(U, M0, M1, M2, M3) ->
-    {P0, P1, P2, P3} = cvt_pwm(M0, M1, M2, M3),
+
+    {P0, P1, P2, P3} = cvt_pwm(clip_pwm(M0, M1, M2, M3)),
 
     write_pwm(U, P0, P1, P2, P3),
     clip_pwm(M0, M1, M2, M3).

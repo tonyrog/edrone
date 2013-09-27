@@ -18,19 +18,20 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
 
--export([flat_trim/0, enable/0, disable/0, move_to/1, move_to_height/1]).
+-export([flat_trim/0, enable/0, disable/0, move_to/1, move_to_altitude/1]).
 
 -define(SERVER, ?MODULE). 
 
 -record(st, { 
+	  enabled = false,
 	  uart = undefined,
 	  pwm_pid = undefined,
 	  nav_recv_ref = undefined,
-	  flat_trim = #flat_trim{},
-	  current_pos = #position {},
-	  target_pos = #position{},
-	  enabled = false,
-	  motor = {0,0,0,0}
+	  flat_trim = #flat_trim{},    %% Flat trim calibration data
+	  pos = #position {},          %% Our current position
+	  target_pos = #position{},    %% Our desired target position
+	  movement = #movement{},      %% Our current movement.
+	  motor = {0.0, 0.0, 0.0, 0.0} %% Motor throttling (0.0 - 1.0)
 	 }).
 
 %%%===================================================================
@@ -65,6 +66,11 @@ start_link() ->
 init([]) ->
     %% Setup navboard communication. 
     Pid = edrone_motor:start(),
+    random:seed(),
+    i2c:start(),
+    edrone_bat:init(),
+    
+    io:format("Bat: ~f", [edrone_bat:read()]),
     {ok, Uart} = edrone_navboard:init(),
     {ok, #st { uart = Uart, pwm_pid = Pid } }.
 
@@ -82,9 +88,9 @@ disable() ->
 move_to(#position {} = Pos) ->
     gen_server:call(?MODULE, {move_to, Pos}).
 
-%% Height. 
-move_to_height(CM) ->
-    gen_server:call(?MODULE, {move_to_height, CM}).
+%% Altitude. 
+move_to_altitude(CM) ->
+    gen_server:call(?MODULE, {move_to_altitude, CM}).
     
 %%--------------------------------------------------------------------
 %% @private
@@ -133,8 +139,8 @@ handle_call(disable, _From, St) when St#st.enabled =:= true->
 handle_call({ move_to, #position { } = TargetPos}, _From, St) ->
     { reply, ok, St#st { target_pos = TargetPos } };
 
-handle_call({ move_to_height, CM }, _From, St) ->
-    { reply, ok, St#st { target_pos = (St#st.target_pos)#position { height = CM } } };
+handle_call({ move_to_altitude, CM }, _From, St) ->
+    { reply, ok, St#st { target_pos = (St#st.target_pos)#position { alt = CM } } };
 
 handle_call(_Request, _From, St) ->
     Reply = ok,
@@ -168,15 +174,10 @@ handle_cast(_Msg, St) ->
 handle_info({uart_async, Uart, RecvRef, Data} , St) when St#st.uart =:= Uart, St#st.nav_recv_ref =:= RecvRef ->
     NSt = case edrone_navboard:decode_nav_data(Data) of 
 	      { ok, #nav_frame{} = NavFrame } ->  
-		  %% FIXME: INSERT SIGNAL FILTER CALL HERE
-
 		  %% Process the nav frame to a nav state
 		  NavState = edrone_navboard:process_nav_frame(NavFrame, St#st.flat_trim),
-		  io:format("nav: Acc(g)={x(~-10.4f) y(~-10.4f) z(~-10.4f)} Gyro(deg)={x(~-10.4f) y(~-10.4f) z(~-10.4f)} Height(cm)=~10.4f Compass(deg)={x(~-10.4f) y(~-10.4f) z(~-10.4f)}~n", 
-			    [ NavState#nav_state.ax, NavState#nav_state.ay, NavState#nav_state.az, 
-			      NavState#nav_state.gx, NavState#nav_state.gy, NavState#nav_state.gz, 
-			      NavState#nav_state.height,
-			      NavState#nav_state.mx, NavState#nav_state.my, NavState#nav_state.mz ]),
+
+		  %% FIXME: INSERT SIGNAL FILTER CALL HERE
 
 		  %% Process the position and return its new state.
 		  process_nav_state(St, NavState);
@@ -239,43 +240,131 @@ code_change(_OldVsn, St, _Extra) ->
 %%%===================================================================
 
 %% 
-process_nav_state(#st{ current_pos = CP, target_pos = TP } = St, 
+process_nav_state(#st{ pos = CurPos, target_pos = TgtPos, movement = CurMove } = St, 
 		  #nav_state{ } = NavState) ->
+    
+    %% Timestamp delta (usec) between last nav state update, and this nav state
+    %% 
+    TSDelta = (NavState#nav_state.timestamp - CurPos#position.timestamp) / 1000000.0,
+    
 
 
-    #position {
-      x = TgtX, y = TgtY, height = TgtHeight,
-      yaw = TgtYaw, pitch = TgtPitch, roll = TgtRoll,
-      heading = TgtHeading, direction = TgtDirection,
-      speed = TgtSpeed, climb = TgtClimb 
-     } = TP,
+    %% Update our movement record.
+    NewMove = #movement { 
+      %% Set altitude speed (up = positive, down = negative) in cm/sec.
+      alt_spd = (NavState#nav_state.alt - CurPos#position.alt) / TSDelta,
+      x_spd = CurMove#movement.x_spd + NavState#nav_state.ax,
+      y_spd = CurMove#movement.y_spd + NavState#nav_state.ay,
 
-    #position {
-      x = CurX, y = CurY, height = CurHeight,
-      yaw = CurYaw, pitch = CurPitch, roll = CurRoll,
-      heading = CurHeading, direction = CurDirection,
-      speed = CurSpeed, climb = CurClimb 
-     } = CP,
+      roll_spd = NavState#nav_state.gx,
+      pitch_spd = NavState#nav_state.gy,
+      yaw_spd = NavState#nav_state.gz
+     },
 
-    %% Lose the compile warnings without having to add an underscore.
-    TgtHeight, TgtX, TgtY, TgtPitch, TgtRoll, TgtYaw, TgtDirection,
-    TgtHeading, TgtSpeed, CurX, CurY, CurPitch, TgtClimb, CurHeight,
-    CurRoll, CurYaw, CurDirection, CurHeading, CurClimb, CurSpeed, 
-
-
-    %% Just operate on climb rate right now. (cm/sec)
-    ClippedHeight = min(NavState#nav_state.height, TgtHeight),
-    Throttle = case TgtHeight of 
-	0 -> 0.0;
-	0.0 -> 0.0;
-	_ -> 1 - (ClippedHeight / TgtHeight)
-    end,
-
-%%    ClippedThrottle = edrone_motor:clip_pwm(Throttle, Throttle, Throttle, Throttle),
-    io:format("Throttle: ~p ~n", [ Throttle ]),
-    ClippedThrottle = edrone_motor:set_pwm(St#st.pwm_pid, Throttle, Throttle, Throttle, Throttle),
-    St#st { motor = ClippedThrottle, 
-	    current_pos = CP#position { height = NavState#nav_state.height} }.
+    %% Update our spatial position
+    NewPos = #position {
+      alt = NavState#nav_state.alt, 
+      pitch = NavState#nav_state.ax,
+      roll = NavState#nav_state.ay,
+      yaw = NavState#nav_state.mx,
+      timestamp = NavState#nav_state.timestamp
+     },
 
 
+    %% TmpT1 = mixin_altitude(St#st.motor, NavState, NewPos, TgtPos), %% Nil op for now
+    %% TmpT2 = mixin_roll(TmpT1, NavState, NewPos, TgtPos),
+    %% TmpT3 = mixin_yaw(TmpT2, NavState, NewPos, TgtPos),
+    
+    { M0, M1, M2, M3 } = mixin_pitch(St#st.motor, NavState, NewPos, TgtPos),
 
+    { T0, T1, T2, T3 } = edrone_motor:set_pwm(St#st.pwm_pid, M0, M1, M2, M3),
+%%    ClippedThrottle = edrone_motor:clip_pwm(M0, M1, M2, M3),
+    
+    %% ugly slowdown of output
+    %% Rand = random:uniform(),
+
+    %% if Rand < 0.1 ->
+    %% 	    io:format("\e[H\e[2JTSDelta: ~p~n", 
+    %% 		      [TSDelta * 1000.0]),
+
+%%	    dbg_nav(NavState),
+    %% dbg_position(NewPos), 
+%%    dbg_movement(NewMove), io:format("~n"),
+%%	    dbg_position(NewPos),
+%%	    io:format("Throttle: ~p ~n", [ Throttle ]),
+%%	    true;
+%%       true -> true
+%%    end,
+    St#st { motor = { T0, T1, T2, T3 },
+	    target_pos = TgtPos#position { pitch = 0.03},
+	    pos = NewPos,
+	    movement = NewMove }.
+
+
+
+mixin_pitch(M, _NavState, Pos, TPos) when Pos#position.pitch =:= TPos#position.pitch->
+    M;  %% We have the desired pitch
+
+%%
+%% Mix in pitch adjustments for motors.
+%%
+%% We do this by calculating a desired value for our pitch roll, which is based
+%% on how far away our current pitch angle is from the target pitch angle.
+%% 
+%% If our current roll rate (as reported by the x-axis gyro) is too low, we 
+%% add throttle with an increment that approaches zero as we get closer to
+%% our desired roll rate.
+%%
+mixin_pitch({M0, M1, M2, M3}, NavState, CPos, TPos) ->
+    
+    %% How far away are we from our target pitch angle? (-1.0..1.0) 
+    TargetRollRate = distance(CPos#position.pitch, TPos#position.pitch),
+
+    %% How far away is our current roll rate from the target roll rate.
+    %%RollRateDistance = distance(NavState#nav_state.gy, TargetRollRate),
+
+    %% Calculate the roll rate adjustments to be made to the motors
+    %% FIXME: Configurable roll rate adjustment divider
+    
+    Adj = cap(TargetRollRate / 30.0, -0.0003 , 0.0003),
+    io:format("CPitch(~-10.4f) TPitch(~-10.4f) -> TRollRate(~-10.4f) -> MotorAdj(~-10.4f) acc_x(~10.4f) roll_rate(~10.f4)~n",
+     	      [ CPos#position.pitch, TPos#position.pitch,
+     		TargetRollRate,  
+     		Adj,NavState#nav_state.ax, NavState#nav_state.gx]),
+    %% Throttle back rear motors, throttle up front motors with the given adjustments
+%%    { M0 + Adj, M1 + Adj, M2 - Adj, M3 - Adj }.
+    { M0 + Adj, M1 + Adj, M2, M3 }.
+
+
+%% Nil op for now
+mixin_roll(M, _NavState, _CPos, _TPos) -> M.
+
+%% Nil op for now
+mixin_yaw(M, _NavState, _CPos, _TPos) -> M. 
+
+mixin_altitude(M, _NavState, _CPos, _TPos) -> M.
+
+%% FIXME: 1/X Formula?
+distance(Current, Target)  ->
+    Target - Current.
+
+
+dbg_nav(NS) ->
+    io:format("nav:  Acc(g)=   {x(~-10.4f) y(~-10.4f) z(~-10.4f)}         Gyro(deg)={x(~-10.4f) y(~-10.4f) z(~-10.4f)} Alt(cm)=~10.4f Comp(deg)={x(~-10.4f) y(~-10.4f) z(~-10.4f)}", 
+	      [ NS#nav_state.ax, NS#nav_state.ay, NS#nav_state.az, 
+		NS#nav_state.gx, NS#nav_state.gy, NS#nav_state.gz, 
+		NS#nav_state.alt,
+		NS#nav_state.mx, NS#nav_state.my, NS#nav_state.mz ]).
+
+dbg_movement(M) ->
+    io:format("move: X(cm/sec)={x(~-10.4f) y(~-10.4f) alt(~-10.4f)} orient(deg/sec)={roll(~-10.4f) pitch(~-10.4f) yaw(~-10.4f)}", 
+	      [ M#movement.x_spd, M#movement.y_spd, M#movement.alt_spd,
+		M#movement.roll_spd, M#movement.pitch_spd, M#movement.yaw_spd ]).
+
+
+dbg_position(M) ->
+    io:format("pos:  X(cm)=    {x(~-10.4f) y(~-10.4f) alt(~-10.4f)}     orient(deg)={roll(~-10.4f) pitch(~-10.4f) yaw(~-10.4f)}", 
+	      [ M#position.x, M#position.y, M#position.alt,
+		M#position.roll, M#position.pitch, M#position.yaw ]).
+cap(Val, Min, Max) ->
+    max(min(Val, Max), Min).
