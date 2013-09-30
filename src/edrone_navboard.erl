@@ -13,6 +13,7 @@
 	 flat_trim/3,
 	 sync_stream/2,
 	 enable_frame_report/1,
+	 read_raw_nav_frame/2,
 	 decode_nav_data/1,
 	 process_nav_frame/2]).
 
@@ -386,7 +387,7 @@ flat_trim(Uart, Deviation, Tolerance) ->
 %% Enable a single frame report
 enable_frame_report(Uart) ->
 %%    DOES NOT WORK! Does not send message to inbox.
-%%    uart:setopts(Uart, [{packet, {size, ?NAV_FRAME_SIZE}, { active, once }}]),
+%%    uart:setopts(Uart, [{packet, {size, ?NAV_FRAME_SIZE}, { active, once }}]).
     uart:async_recv(Uart, ?NAV_FRAME_SIZE, 100).
 
 init() ->

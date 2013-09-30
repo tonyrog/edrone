@@ -24,9 +24,9 @@
 
 -define(SERVER, ?MODULE). 
 
--define(PITCH_PID_P, 1.0).
--define(PITCH_PID_I, 0.0).
--define(PITCH_PID_D, 0.2). 
+-define(PITCH_PID_P, 0.8).
+-define(PITCH_PID_I, 0.5).
+-define(PITCH_PID_D, 0.1).  %% 0.1 == good. 0.25 == bad
 
 -define(ROLL_PID_P, 0.9).
 -define(ROLL_PID_I, 0.04).
@@ -40,7 +40,7 @@
 -define(ALT_PID_I, 0.04).
 -define(ALT_PID_D, 0.0).
 
--define(MOTOR_BASE, 0.5).
+-define(MOTOR_BASE, 0.4).
 -define(PITCH_RAMP, 1.0). %% Rampup/rampdown per second
 -define(YAW_RAMP,   0.01). %% Rampup/rampdown per second
 -define(ROLL_RAMP,  0.01). %% Rampup/rampdown per second
@@ -104,6 +104,7 @@ init([]) ->
     edrone_bat:init(),
     
     io:format("Bat: ~f", [edrone_bat:read()]),
+%%    {ok, Uart} = edrone_navboard:init(),
     {ok, Uart} = edrone_navboard:init(),
     {ok, #st { 
        uart = Uart, 
@@ -149,7 +150,7 @@ set_pitch(A) when is_float(A), A =< 1.0, A >= 0.0->
 %%                                   {stop, Reason, Reply, St} |
 %%                                   {stop, Reason, St}
 %% @end
-%%--------------------------------------------------------------------
+%--------------------------------------------------------------------
 
 %% flat_trim must be called before we call enable
 handle_call(flat_trim, _From, St) ->
@@ -166,6 +167,7 @@ handle_call(enable, _From, St) when St#st.flat_trim =:= undefined ->
 
 %% Enable so that we get a message when a packet is read by uart.
 handle_call(enable, _From, St) ->
+
     {ok, RecvRef } = edrone_navboard:enable_frame_report(St#st.uart),
     { reply, ok, St#st { enabled = true, 
 			 nav_recv_ref = RecvRef,
@@ -220,7 +222,9 @@ handle_cast(_Msg, St) ->
 %%                                   {stop, Reason, St}
 %% @end
 %%--------------------------------------------------------------------
-handle_info({uart_async, Uart, RecvRef, Data} , St) when St#st.uart =:= Uart, St#st.nav_recv_ref =:= RecvRef ->
+handle_info({uart_async, Uart, RecvRef, Data} , St) 
+  when St#st.uart =:= Uart, St#st.nav_recv_ref =:= RecvRef ->
+
     NSt = case edrone_navboard:decode_nav_data(Data) of 
 	      { ok, #nav_frame{} = NavFrame } ->  
 		  %% Process the nav frame to a nav state
@@ -236,20 +240,22 @@ handle_info({uart_async, Uart, RecvRef, Data} , St) when St#st.uart =:= Uart, St
 		  case edrone_navboard:sync_stream(St#st.uart, 100) of
 		      ok -> St;
 		      { error, Err } -> 
-			  io:format("FAILED TO SYNC NAVBOARD STREAM: ~p~n", [ Err] ),
+			  io:format("FAILED TO S
+YNC NAVBOARD STREAM: ~p~n", [ Err] ),
 			  St#st { enabled = false }
 		  end
 	  end,
     
     %% If we are still enabled, re-arm the uart to deliver the next frame.
-    Ref = if 
-	NSt#st.enabled =:= true -> 
+    Ref = if NSt#st.enabled =:= true -> 
 		  {ok, R } = edrone_navboard:enable_frame_report(NSt#st.uart),
 		  R;
-	true -> undefined
-    end,
+	     true -> undefined
+
+	  end,
     { noreply, NSt#st { nav_recv_ref = Ref }};
-		
+
+
 	    
 handle_info({uart_error, Uart, Reason} , St) when Uart =:= St#st.uart ->
     io:format("UART ERROR: ~p~n", [ Reason ]),
@@ -283,10 +289,17 @@ terminate(_Reason, _St) ->
 %%--------------------------------------------------------------------
 %% Enable so that we get a message when a packet is read by uart.
 code_change(_OldVsn, St, _Extra) when St#st.enabled =:= true->
-    io:format("Code upgrade.~n"),
-    {ok, Uart} = edrone_navboard:init(),
-    {ok, RecvRef } = edrone_navboard:enable_frame_report(St#st.uart),
-    { ok, St#st { nav_recv_ref = RecvRef, uart = Uart } }.
+    io:format("Code upgrade. P(~-10.4f) I(~-10.4f) D(~-10.4f) R(~-10.4f)~n",
+	     [?PITCH_PID_P, ?PITCH_PID_I, ?PITCH_PID_D, ?PITCH_RAMP]),
+
+    { ok, St#st { 
+	    pitch_pidctl = edrone_pid:set_param(St#st.pitch_pidctl, 
+						?PITCH_PID_P, 
+						?PITCH_PID_I, 
+						?PITCH_PID_D)
+	   }
+    }.
+     
 
 
 %%%===================================================================
@@ -328,6 +341,8 @@ process_nav_state(#st{ pos = CurPos,
     %%
     NRampPos   = ramp_position(RPos, TgtPos, TSDelta),
 
+
+%%    NPitchPid1 = edrone_pid:set_point(St#st.pitch_pidctl, NavState#nav_state.ax),
     NPitchPid1 = edrone_pid:set_point(St#st.pitch_pidctl, NRampPos#position.pitch),
     NRollPid1  = edrone_pid:set_point(St#st.roll_pidctl, NRampPos#position.roll),
     NYawPid1   = edrone_pid:set_point(St#st.yaw_pidctl, NRampPos#position.yaw),
@@ -342,18 +357,16 @@ process_nav_state(#st{ pos = CurPos,
 			       NRampPos#position.pitch, PidTS),
 
 
-    { M1_0, M1_1, M1_2, M1_3 } = M1,
-    {DBG, _, _, _ } = M2 = edrone_motor:clip_pwm(M1_0, M1_1, M1_2, M1_3), %% Don't actually run motor
-
-    %%{DBG, _, _, _ } = M2 = edrone_motor:set_pwm(St#st.pwm_pid, M1),
-
-
+%%    { M1_0, M1_1, M1_2, M1_3 } = M1,
+%%    {_DBG, _, _, _ } = M2 = edrone_motor:clip_pwm(M1_0, M1_1, M1_2, M1_3), %% Don't actually run motor
     
-    io:format("CP(~-7.4f) TP(~-7.4f) RP(~-7.4f) M(~-7.4f)~n", 
-	      [FilteredPitch, 
-	       TgtPos#position.pitch,
-	       NRampPos#position.pitch,
-	       DBG]),
+    {DBG, _, _, _ } = M2 = edrone_motor:set_pwm(St#st.pwm_pid, M1),
+    
+    %% io:format("CP(~-7.4f) TP(~-7.4f) RP(~-7.4f) M(~-7.4f) Uart(~p) recv_ref(~p)~n", 
+    %% 	      [FilteredPitch, 
+    %% 	       TgtPos#position.pitch,
+    %% 	       NRampPos#position.pitch,
+    %% 	       DBG]),
 
     St#st { motor = M2,
 	    ramp_pos = NRampPos,

@@ -8,7 +8,7 @@
 -module(edrone_pid).
 
 -export([new/3, new/5]).
--export([set_point/2]).
+-export([set_point/2, set_param/4]).
 -export([update/2, update/3]).
 -export([timestamp_to_us/1]).
 -export([timestamp/0]).
@@ -40,6 +40,11 @@ new(Kp,Ki,Kd, IMin, IMax)
 	   set_point = 0,
 	   timestamp = timestamp(),
 	   i_min=IMin, i_max=IMax }.    
+
+set_param(Pid, Kp,Ki,Kd) 
+  when is_number(Kp), is_number(Ki), is_number(Kd) ->
+    Pid#pid { kp = Kp, ki = Ki, kd = Kd }.    
+
 
 set_point(PID, Value) when is_number(Value) ->
     PID#pid { set_point = Value }.
