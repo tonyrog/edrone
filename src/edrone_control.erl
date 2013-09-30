@@ -25,8 +25,8 @@
 -define(SERVER, ?MODULE). 
 
 -define(PITCH_PID_P, 0.8).
--define(PITCH_PID_I, 0.5).
--define(PITCH_PID_D, 0.1).  %% 0.1 == good. 0.25 == bad
+-define(PITCH_PID_I, 1.0).
+-define(PITCH_PID_D, 0.1). 
 
 -define(ROLL_PID_P, 0.9).
 -define(ROLL_PID_I, 0.04).
@@ -64,7 +64,8 @@
 	  pitch_lowpass = undefined,
 	  roll_lowpass = undefined,
 	  yaw_lowpass = undefined,
-	  alt_lowpass = undefined
+	  alt_lowpass = undefined,
+	  glitch_count = 0
 	 }).
 
 %%%===================================================================
@@ -176,7 +177,7 @@ handle_call(enable, _From, St) ->
 
 %% Disable the frame stream from the nav board
 handle_call(disable, _From, St) when St#st.enabled =:= true->
-    edrone:set_pwm(St#st.pwm_pid, 0.0, 0.0, 0.0, 0.0),
+    edrone:set_pwm_norm(St#st.pwm_pid, 0.0, 0.0, 0.0, 0.0),
     { reply, ok, St#st { enabled = false } };
 
 %% Setup a new target position/orientation that we should strive
@@ -292,13 +293,7 @@ code_change(_OldVsn, St, _Extra) when St#st.enabled =:= true->
     io:format("Code upgrade. P(~-10.4f) I(~-10.4f) D(~-10.4f) R(~-10.4f)~n",
 	     [?PITCH_PID_P, ?PITCH_PID_I, ?PITCH_PID_D, ?PITCH_RAMP]),
 
-    { ok, St#st { 
-	    pitch_pidctl = edrone_pid:set_param(St#st.pitch_pidctl, 
-						?PITCH_PID_P, 
-						?PITCH_PID_I, 
-						?PITCH_PID_D)
-	   }
-    }.
+    { ok, St }.
      
 
 
@@ -322,7 +317,6 @@ process_nav_state(#st{ pos = CurPos,
 
     %% We are not using movement yet, so leave it out.
     {FilteredPitch, PitchLowPass}  = lowpass_filter(St#st.pitch_lowpass, NavState#nav_state.ax),
-    %% io:format("Pitch(~-7.4f / ~-7.4f) ", [ NavState#nav_state.ax, FilteredPitch ]),
     {_FilteredRoll, RollLowPass}   = lowpass_filter(St#st.roll_lowpass, NavState#nav_state.ay),
     {_FilteredYaw, YawLowPass}     = lowpass_filter(St#st.yaw_lowpass, NavState#nav_state.az),
     {_FilteredAlt, AltLowPass}     = lowpass_filter(St#st.alt_lowpass, NavState#nav_state.az),
@@ -342,7 +336,6 @@ process_nav_state(#st{ pos = CurPos,
     NRampPos   = ramp_position(RPos, TgtPos, TSDelta),
 
 
-%%    NPitchPid1 = edrone_pid:set_point(St#st.pitch_pidctl, NavState#nav_state.ax),
     NPitchPid1 = edrone_pid:set_point(St#st.pitch_pidctl, NRampPos#position.pitch),
     NRollPid1  = edrone_pid:set_point(St#st.roll_pidctl, NRampPos#position.roll),
     NYawPid1   = edrone_pid:set_point(St#st.yaw_pidctl, NRampPos#position.yaw),
@@ -357,10 +350,22 @@ process_nav_state(#st{ pos = CurPos,
 			       NRampPos#position.pitch, PidTS),
 
 
-%%    { M1_0, M1_1, M1_2, M1_3 } = M1,
-%%    {_DBG, _, _, _ } = M2 = edrone_motor:clip_pwm(M1_0, M1_1, M1_2, M1_3), %% Don't actually run motor
     
-    {DBG, _, _, _ } = M2 = edrone_motor:set_pwm(St#st.pwm_pid, M1),
+    M2 = edrone_motor:set_pwm_norm(St#st.pwm_pid, M1),
+     GlitchCount = 0,
+
+    %% {GlitchCount, M2} = 
+    %%   	case glitch(St#st.glitch_count) of
+    %%   	    0 ->
+    %%   		{ 0, edrone_motor:set_pwm_norm(St#st.pwm_pid, M1) };
+
+    %%   	    Cnt ->
+    %%   		io:format("Glitch: ~p~n", [ Cnt ]),
+    %%   		{ Cnt, edrone_motor:set_pwm_norm(St#st.pwm_pid, {0.1, 0.1, 0.0, 0.0}) }
+    %%   	end,
+    
+		
+				   
     
     %% io:format("CP(~-7.4f) TP(~-7.4f) RP(~-7.4f) M(~-7.4f) Uart(~p) recv_ref(~p)~n", 
     %% 	      [FilteredPitch, 
@@ -378,9 +383,19 @@ process_nav_state(#st{ pos = CurPos,
 	    roll_lowpass = RollLowPass,
 	    yaw_lowpass = YawLowPass,
 	    alt_lowpass = AltLowPass, %% WILL NOT WORK. Sonar works at 26+CM only.
-	    pos = NCurPos}.
+	    pos = NCurPos,
+	    glitch_count = GlitchCount}.
 
 
+
+glitch(0) ->
+    case random:uniform(100) of
+	1 -> 7;
+	_ -> 0
+    end;
+
+glitch(Count) ->
+    Count - 1.
 
 mixin({M0, M1, M2, M3}, PidCtl, CurPos, TgtPos, _PidTS) 
   when CurPos =:= TgtPos->
@@ -393,6 +408,7 @@ mixin({M0, M1, M2, M3}, PidCtl, CurPos, TgtPos, _PidTS)
 mixin({_M0_, _M1, M2, M3}, PidCtl, CurPos, _TgtPos, PidTS) ->
     %% FIXME: Harmonize timestamp usage across entire system 
     %%        edrone_pid:timestamp() vs. edrone_lib:timestamp().
+
     { NVal, NPidCtl } = edrone_pid:update(PidCtl, CurPos, PidTS), 
 
      %% io:format(" Cur(~-6.4f) Tgt(~-6.4f) -> NVal(~-6.4f) ",
