@@ -284,8 +284,9 @@ terminate(_Reason, _St) ->
 %% Enable so that we get a message when a packet is read by uart.
 code_change(_OldVsn, St, _Extra) when St#st.enabled =:= true->
     io:format("Code upgrade.~n"),
+    {ok, Uart} = edrone_navboard:init(),
     {ok, RecvRef } = edrone_navboard:enable_frame_report(St#st.uart),
-    { ok, St#st { nav_recv_ref = RecvRef } }.
+    { ok, St#st { nav_recv_ref = RecvRef, uart = Uart } }.
 
 
 %%%===================================================================
@@ -340,11 +341,13 @@ process_nav_state(#st{ pos = CurPos,
 			       NCurPos#position.pitch, 
 			       NRampPos#position.pitch, PidTS),
 
-    %% io:format("~n"),
-    {DBG, _, _, _ } = M2 = edrone_motor:set_pwm(St#st.pwm_pid, M1),
 
-    %% { M1_0, M1_1, M1_2, M1_3 } = M1,
-    %% M2 = edrone_motor:clip_pwm(M1_0, M1_1, M1_2, M1_3), %% Don't actually run motor
+    { M1_0, M1_1, M1_2, M1_3 } = M1,
+    {DBG, _, _, _ } = M2 = edrone_motor:clip_pwm(M1_0, M1_1, M1_2, M1_3), %% Don't actually run motor
+
+    %%{DBG, _, _, _ } = M2 = edrone_motor:set_pwm(St#st.pwm_pid, M1),
+
+
     
     io:format("CP(~-7.4f) TP(~-7.4f) RP(~-7.4f) M(~-7.4f)~n", 
 	      [FilteredPitch, 
