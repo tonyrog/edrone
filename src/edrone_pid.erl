@@ -71,6 +71,9 @@ update_e(PID, Error, Dt, Ts) ->
 	 end,
     D1 = (Error - PID#pid.prev_error) / Dt,
     Output = (PID#pid.kp*Error)+(PID#pid.ki*I2)+(PID#pid.kd*D1),
+    %% io:format("| Err(~-10.4f)  P(~-10.4f)  I(~-10.4f)  D(~-10.4f) ",
+    %% 	      [Error, PID#pid.kp*Error, PID#pid.ki*I2, PID#pid.kd*D1]),
+
     {Output, PID#pid { integral=I2, prev_error=Error, timestamp=Ts } }.
 
 timestamp_diff({M,S,U1},{M,S,U0}) ->

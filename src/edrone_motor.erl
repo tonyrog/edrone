@@ -8,14 +8,14 @@
 -module(edrone_motor).
 
 -export([start/0]).
--export([set_pwm/5, set_leds/5]).
+-export([set_pwm/2, set_leds/5]).
 -export([get_pwm/1, get_pwm_async/1]).
 
 %% internal test
 -export([open/0, init/1]).
 -export([command_/3]).
 -export([write_pwm/5, write_leds/5, 
-	 run_pwm/5]).
+	 run_pwm/5, clip_pwm/4]).
 -export([delay/2]).
 
 %% test loops
@@ -48,7 +48,7 @@
 
 test_motors(Pid) ->
     [begin
-	 set_pwm(Pid, M0, M1, M2, M3),
+	 set_pwm(Pid, {M0, M1, M2, M3}),
 	 timer:sleep(1000)
      end || {M0,M1,M2,M3} <- [{10,0,0,0},
 			      {0,10,0,0},
@@ -82,7 +82,7 @@ start() ->
 	      loop(U, T, T0, ?TRANSMIT_IVAL, 0, 0, 0, 0, 0, 0)
       end).
 
-set_pwm(Pid, M0, M1, M2, M3) ->
+set_pwm(Pid, {M0, M1, M2, M3}) ->
     ClippedPWM = clip_pwm(M0, M1, M2, M3),
     { P0, P1, P2, P3 } = cvt_pwm(ClippedPWM),
     cast(Pid, {set_pwm, P0,P1,P2,P3}),

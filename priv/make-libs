@@ -31,6 +31,7 @@ tar czf edrone.tgz --directory ../.. \
     ./edrone/ebin/edrone_sup.beam \
     ./edrone/ebin/edrone_lib.beam \
     ./edrone/ebin/edrone_motor.beam \
+    ./edrone/ebin/edrone_pid.beam \
     ./edrone/ebin/edrone_navboard.beam \
     ./edrone/ebin/edrone_control.beam \
     ./edrone/ebin/edrone_bat.beam
