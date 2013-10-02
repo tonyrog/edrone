@@ -8,7 +8,7 @@
 -module(edrone_motor).
 
 -export([start/0]).
--export([set_pwm/2, set_leds/5]).
+-export([set_pwm/2, set_pwm_norm/2, set_leds/5]).
 -export([get_pwm/1, get_pwm_async/1]).
 
 %% internal test
@@ -82,12 +82,18 @@ start() ->
 	      loop(U, T, T0, ?TRANSMIT_IVAL, 0, 0, 0, 0, 0, 0)
       end).
 
-set_pwm(Pid, {M0, M1, M2, M3}) ->
-    ClippedPWM = clip_pwm(M0, M1, M2, M3),
+
+set_pwm(Pid, {M0,M1,M2,M3}) ->
+    { P0, P1, P2, P3 } = clip_pwm(M0, M1, M2, M3),
+    cast(Pid, {set_pwm, P0,P1,P2,P3}),
+    { P0, P1, P2, P3 }.
+    
+%% provide relative motor speeds in a normalized 0.0 to 1.0 interval
+set_pwm_norm(Pid, {M0, M1, M2, M3}) ->
+    ClippedPWM = clip_pwm_norm(M0, M1, M2, M3),
     { P0, P1, P2, P3 } = cvt_pwm(ClippedPWM),
     cast(Pid, {set_pwm, P0,P1,P2,P3}),
- 
-    ClippedPWM. %% Will be clipped to 0.0-1.0 interval
+    ClippedPWM.
     
 
 set_leds(Pid, L0, L1, L2, L3) ->
@@ -223,11 +229,17 @@ write_leds(U, Led0, Led1, Led2, Led3) ->
 		   (Led0 bsr 1):1, (Led1 bsr 1):1, 
 		   (Led2 bsr 1):1, (Led3 bsr 1):1, 0:1 >>).
 
-clip_pwm(M0, M1, M2, M3) ->
+clip_pwm_norm(M0, M1, M2, M3) ->
     { min(max(0.0, M0), 1.0),
       min(max(0.0, M1), 1.0),
       min(max(0.0, M2), 1.0),
       min(max(0.0, M3), 1.0) }.
+
+clip_pwm(M0, M1, M2, M3) ->
+    { min(max(?PWM_MIN, M0), ?PWM_MAX),
+      min(max(?PWM_MIN, M1), ?PWM_MAX),
+      min(max(?PWM_MIN, M2), ?PWM_MAX),
+      min(max(?PWM_MIN, M3), ?PWM_MAX) }.
 
 cvt_pwm({M0, M1, M2, M3}) ->
     { trunc(?PWM_MIN + M0*(?PWM_MAX - ?PWM_MIN)),
