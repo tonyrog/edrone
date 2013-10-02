@@ -76,8 +76,8 @@ update_e(PID, Error, Dt, Ts) ->
 	 end,
     D1 = (Error - PID#pid.prev_error) / Dt,
     Output = (PID#pid.kp*Error)+(PID#pid.ki*I2)+(PID#pid.kd*D1),
-    %% io:format("| Err(~-10.4f)  P(~-10.4f)  I(~-10.4f)  D(~-10.4f) ",
-    %% 	      [Error, PID#pid.kp*Error, PID#pid.ki*I2, PID#pid.kd*D1]),
+     io:format(" | E(~-7.4f) P(~-7.4f) I(~-7.4f) D(~-7.4f) O(~-7.4f)",
+     	      [Error, PID#pid.kp*Error, PID#pid.ki*I2, PID#pid.kd*D1, Output]),
 
     {Output, PID#pid { integral=I2, prev_error=Error, timestamp=Ts } }.
 
