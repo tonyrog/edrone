@@ -45,8 +45,8 @@
 %% Max number of degrees reported by gyro: 2000
 %% DEG_GYRO_CONST = 32767 / 2000
 -define(GYRO_DEG_PER_UNIT, 0.061037018951994385). 
--define(GYRO_MAX, 32767).  
--define(GYRO_MIN, -32767).
+-define(GYRO_MAX, 4000).   %% Actually signed 16 bit, but we'll never see values that large.
+-define(GYRO_MIN, -4000). 
 -define(GYRO_SPAN, (?GYRO_MAX - ?GYRO_MIN)).
 %% Number of compass units per degree
 %% 65537 / 360

@@ -24,19 +24,22 @@
 
 -define(SERVER, ?MODULE). 
 
-%% -define(PID_P, 0.8).
-%% -define(PID_I, 1.0).
-%% -define(PID_D, 0.1). 
--define(PID_P, 0.8).  %% 9 4
--define(PID_I, 1.0).
--define(PID_D, 0.1). 
+
+%% 1.0    0.25   0.3  WORKS
+
+
+-define(PID_P, 1.0). 
+-define(PID_I, 0.25).
+-define(PID_D, 0.3). 
 
 -define(PITCH_RAMP, 1.0). %% Rampup/rampdown per second
 -define(YAW_RAMP,   1.0). %% Rampup/rampdown per second
 -define(ROLL_RAMP,  1.0). %% Rampup/rampdown per second
--define(ALT_RAMP,   4.0). %% Rampup/rampdown - cm / per second
+
+-define(ALT_RAMP,   6.0). %% Rampup/rampdown - cm / per second
 
 -define(MOTOR_BASELINE, 0.4). %% Never let motors go under this level.
+-define(ACC_GYRO_SYNC_INTVL, 3000000). %% Sync gyro dead reconning to accelerometers every 3 seconds.
 
 %% multiplier to apply to all motors to reach the given altitude.
 -define(ALTITUDE_K, (1.0 - ?MOTOR_BASELINE) / 50.0). 
@@ -56,15 +59,15 @@
 	    gz_offset=-14.62
 	   },    %% Flat trim calibration data
 	  nav_ts = 0,                  %% Timestamp of last reveived navboard data.
+	  acc_gyro_sync_ts = 0,        %% Timestamp of last sync between gyro and acceleromoeter
 	  ramp_pos = #position{},      %% Our position as is being ramped toward target_pos
 	  target_pos = #position{},    %% Our desired target position
-	  movement = #movement{},      %% Our current movement.
+	  current_pos = #position{},    %% Our desired target position
 	  motor = {0.0, 0.0, 0.0, 0.0}, %% Motor throttling (0.0 - 1.0)
 	  pidctl = { undefined, undefined, undefined, undefined },
-	  pitch_lowpass = undefined,
-	  roll_lowpass = undefined,
-	  yaw_lowpass = undefined,
+	  acc_lowpass = { undefined, undefined, undefined },
 	  alt_lowpass = undefined,
+	  gyro_lowpass = { undefined, undefined, undefined },
 	  glitch_count = -1 %% 0 == glitch every now and then.
 	 }).
 
@@ -304,7 +307,9 @@ code_change(_OldVsn, St, _Extra) when St#st.enabled =:= true->
 
 %% 
 process_nav_state(#st{ nav_ts = PrevTS, 
+		       current_pos = CurPos,
 		       target_pos = TgtPos, 
+		       acc_gyro_sync_ts = AccGyroSyncTS,
 		       ramp_pos = RPos } = St, 
 		  #nav_state{ } = NavState) ->
     
@@ -312,27 +317,44 @@ process_nav_state(#st{ nav_ts = PrevTS,
     %% Timestamp delta (sec) between last nav state update, and this nav state
     %% 
     TSDelta = (NavState#nav_state.timestamp - PrevTS) / 1000000.0,
+    { AccPitchLP, AccRollLP, AccYawLP } = St#st.acc_lowpass,
+    
 
-     {FilteredPitch, PitchLowPass} = lowpass_filter(St#st.pitch_lowpass, NavState#nav_state.ax),
-     {FilteredRoll, RollLowPass}   = lowpass_filter(St#st.roll_lowpass, NavState#nav_state.ay),
-     {FilteredYaw, YawLowPass}     = lowpass_filter(St#st.yaw_lowpass, NavState#nav_state.az),
-     {FilteredAlt, AltLowPass}     = lowpass_filter(St#st.alt_lowpass, NavState#nav_state.az),
+    %% Accelerometer data
+    { AccPitch, NAccPitchLP } = lowpass_filter(AccPitchLP, NavState#nav_state.ax),
+    { AccRoll, NAccRollLP}   = lowpass_filter(AccRollLP, NavState#nav_state.ay),
+    { AccYaw, NAccYawLP}     = lowpass_filter(AccYawLP, NavState#nav_state.az),
+    
+    {Alt, NAltLP}     = lowpass_filter(St#st.alt_lowpass, NavState#nav_state.alt),
 
-    %% {PitchLowPass, FilteredPitch} = {St#st.pitch_lowpass, NavState#nav_state.ax},
-    %% {RollLowPass, FilteredRoll}   = {St#st.roll_lowpass, NavState#nav_state.ay},
-    %% {YawLowPass, FilteredYaw}     = {St#st.yaw_lowpass, NavState#nav_state.az},
-    %% {AltLowPass, FilteredAlt}     = {St#st.alt_lowpass, NavState#nav_state.az},
-
-
-
+    %% Gyro data.
+    { GyroPitchLP, GyroRollLP, GyroYawLP } = St#st.gyro_lowpass,
+    %% { GyroPitch, NGyroPitchLP } = lowpass_filter(GyroPitchLP, NavState#nav_state.gx),
+    %% { GyroRoll, NGyroRollLP }   = lowpass_filter(GyroRollLP, NavState#nav_state.gy),
+    %% { GyroYaw, NGyroYawLP }     = lowpass_filter(GyroYawLP, NavState#nav_state.gz),
+    { GyroPitch, NGyroPitchLP } = { -NavState#nav_state.gy, GyroPitchLP },
+    { GyroRoll, NGyroRollLP }   = { NavState#nav_state.gx, GyroRollLP },
+    { GyroYaw, NGyroYawLP }     = { -NavState#nav_state.gz, GyroYawLP},
 
     %% Update our spatial position
-    CurPos = #position {
-      alt = FilteredAlt,
-      pitch = FilteredPitch,
-      roll = FilteredRoll,
-      yaw = FilteredYaw
-     },
+    {NCurPos, NAccGyroSync} = 
+	%% Check if it is time to reset our position against accelerometers.
+	%% if NavState#nav_state.timestamp - AccGyroSyncTS > ?ACC_GYRO_SYNC_INTVL ->
+	%% 	io:format("~n~nSYNC~n~n"),
+	%% 	{ #position {
+	%% 	     alt = Alt,
+	%% 	     pitch = AccPitch,
+	%% 	     roll = AccRoll,
+	%% 	     yaw = AccYaw
+	%% 	    }, NavState#nav_state.timestamp };
+	%%    true -> 
+		{ #position {
+		     alt = Alt,
+		     pitch = CurPos#position.pitch + GyroPitch * TSDelta,
+		     roll = CurPos#position.roll + GyroRoll * TSDelta,
+		     yaw = CurPos#position.yaw + GyroYaw * TSDelta
+		    }, AccGyroSyncTS },
+%%	end,
 
     %%
     %% Calculate new ramp position, which wanders at a set max speed
@@ -342,6 +364,7 @@ process_nav_state(#st{ nav_ts = PrevTS,
     { M1, NPids } = calculate_motors(St#st.pidctl, CurPos, NRampPos),
 
     %% Set the motor speeds
+
 
     %% Artificially introduce a glitch
     {GlitchCount, M2} = 
@@ -360,11 +383,12 @@ process_nav_state(#st{ nav_ts = PrevTS,
     St#st { motor = M2,
 	    pidctl = NPids,
 	    ramp_pos = NRampPos,
-	    pitch_lowpass = PitchLowPass,
-	    roll_lowpass = RollLowPass,
-	    yaw_lowpass = YawLowPass,
-	    alt_lowpass = AltLowPass, %% WILL NOT WORK. Sonar works at 26+CM only.
+	    current_pos = NCurPos,
+	    gyro_lowpass = { NGyroPitchLP, NGyroRollLP, NGyroYawLP },
+	    acc_lowpass = { NAccPitchLP, NAccRollLP, NAccYawLP },
+	    alt_lowpass = NAltLP, %% WILL NOT WORK. Sonar works at 26+CM only.
 	    nav_ts = NavState#nav_state.timestamp, 
+	    acc_gyro_sync_ts = NAccGyroSync,
 	    glitch_count = GlitchCount}.
 
 
@@ -383,21 +407,21 @@ glitch(Count) ->
 calculate_motors({P0, P1, P2, P3}, CurPos, TgtPos) ->
 
     %% Calculate the current position of each corner of the drone.
-    CM0 = cap(CurPos#position.pitch - CurPos#position.roll, -1.0, 1.0),
-    CM1 = cap(CurPos#position.pitch + CurPos#position.roll, -1.0, 1.0),
+    CM0 = cap(CurPos#position.pitch + CurPos#position.roll, -1.0, 1.0),
+    CM1 = cap(CurPos#position.pitch - CurPos#position.roll, -1.0, 1.0),
     CM2 = cap(-CurPos#position.pitch - CurPos#position.roll, -1.0, 1.0),
     CM3 = cap(-CurPos#position.pitch + CurPos#position.roll, -1.0, 1.0),
 
     %% Calculate the desired position of each corner of the drone.
-    TM0 = cap(TgtPos#position.pitch - TgtPos#position.roll, -1.0, 1.0),
-    TM1 = cap(TgtPos#position.pitch + TgtPos#position.roll, -1.0, 1.0),
+    TM0 = cap(TgtPos#position.pitch + TgtPos#position.roll, -1.0, 1.0),
+    TM1 = cap(TgtPos#position.pitch - TgtPos#position.roll, -1.0, 1.0),
     TM2 = cap(-TgtPos#position.pitch - TgtPos#position.roll, -1.0, 1.0),
     TM3 = cap(-TgtPos#position.pitch + TgtPos#position.roll, -1.0, 1.0),
 
     io:format("P(~-7.4f) R(~-7.4f) CM(~-7.4f|~-7.4f|~-7.4f|~-7.4f) TM(~-7.4f|~-7.4f|~-7.4f|~-7.4f)",
-	      [CurPos#position.pitch, CurPos#position.roll,
-	       CM0, CM1, CM2, CM3,
-	       TM0-CM0, TM1-CM1, TM2-CM2, TM3-CM3]),
+     	      [CurPos#position.pitch, CurPos#position.roll,
+     	       CM0, CM1, CM2, CM3,
+     	       TM0-CM0, TM1-CM1, TM2-CM2, TM3-CM3]),
 
     
     %% Set the new target point for each motor, and then calculate
@@ -411,9 +435,9 @@ calculate_motors({P0, P1, P2, P3}, CurPos, TgtPos) ->
     io:format(") "),
     
     AltAdd = ?MOTOR_BASELINE + TgtPos#position.alt * ?ALTITUDE_K,
-     io:format("| CA(~-7.4f), TA(~-7.4f)*K(~-7.4f)=~-7.4f",
-     	      [ CurPos#position.alt,TgtPos#position.alt, ?ALTITUDE_K,
-     		 TgtPos#position.alt * ?ALTITUDE_K]),
+    io:format("| CA(~-7.4f), TA(~-7.4f)*K(~-7.4f)=~-7.4f",
+      	      [ CurPos#position.alt,TgtPos#position.alt, ?ALTITUDE_K,
+		TgtPos#position.alt * ?ALTITUDE_K]),
 
     io:format("~n"),
     {{ max(NM0 + AltAdd, ?MOTOR_BASELINE), 

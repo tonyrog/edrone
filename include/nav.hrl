@@ -36,22 +36,17 @@
 %% speed -> Speed (cm/sec) that drone is moving in 'direction'
 %% climb -> Speed (cm/sec) that drone is climbing (positive) or falling (negative)
 -record(position, {
-	  timestamp = 0   :: integer(),   %% Timestamp of position
-	  x = 0.0         :: float(),     %% Lateral position, cm relative start position
-	  y = 0.0         :: float(),     %% Longitudinal position, cm relative start position
+%%	  timestamp = 0   :: integer(),   %% Timestamp of position
 	  alt = 0.0       :: float(),     %% Altitude position, relative sonar ground
 	  yaw = 0.0       :: float(),     %% Yaw deg.
 	  pitch = 0.0     :: float(),     %% Pitch deg.
 	  roll = 0.0      :: float()     %% Roll deg.
 	 }).
 
--record(movement, {
-	  x_spd = 0.0         :: float(),  %% Speed in the x-axis cm/sec
-	  y_spd = 0.0         :: float(),  %% Speed in the y-axis cm/sec
-	  alt_spd = 0.0       :: float(),  %% Speed in the z-axis cm/sec
-	  roll_spd = 0.0      :: float(),  %% Roll speed, deg/sec
-	  pitch_spd = 0.0     :: float(),  %% Pitch speed, deg/sec
-	  yaw_spd = 0.0       :: float()   %% Yaw speed, deg/sec
+-record(rotation, {
+	  roll = 0.0      :: float(),  %% Roll speed, deg/sec
+	  pitch = 0.0     :: float(),  %% Pitch speed, deg/sec
+	  yaw = 0.0       :: float()   %% Yaw speed, deg/sec
 	 }).
 
 %%
