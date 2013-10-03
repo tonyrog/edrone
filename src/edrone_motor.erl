@@ -94,7 +94,6 @@ set_pwm_norm(Pid, {M0, M1, M2, M3}) ->
     { P0, P1, P2, P3 } = cvt_pwm(ClippedPWM),
     cast(Pid, {set_pwm, P0,P1,P2,P3}),
     ClippedPWM.
-    
 
 set_leds(Pid, L0, L1, L2, L3) ->
     cast(Pid, {set_leds,L0,L1,L2,L3}).

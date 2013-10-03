@@ -18,9 +18,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
 
--export([flat_trim/0, enable/0, disable/0, 
-	 set_position/1, set_altitude/1,
-	 set_pitch/1]).
+-export([flat_trim/0, enable/0, disable/0]).
 
 -define(SERVER, ?MODULE). 
 
@@ -30,21 +28,37 @@
 
 -define(PID_P, 1.0). 
 -define(PID_I, 0.25).
--define(PID_D, 0.3). 
+-define(PID_D, 0.1). 
 
--define(PITCH_RAMP, 1.0). %% Rampup/rampdown per second
--define(YAW_RAMP,   1.0). %% Rampup/rampdown per second
--define(ROLL_RAMP,  1.0). %% Rampup/rampdown per second
+-define(PITCH_RAMP, 0.8). %% Rampup/rampdown per second
+-define(YAW_RAMP,   0.8). %% Rampup/rampdown per second
+-define(ROLL_RAMP,  0.8). %% Rampup/rampdown per second
 
 -define(ALT_RAMP,   6.0). %% Rampup/rampdown - cm / per second
 
--define(MOTOR_BASELINE, 0.4). %% Never let motors go under this level.
 -define(ACC_GYRO_SYNC_INTVL, 3000000). %% Sync gyro dead reconning to accelerometers every 3 seconds.
 
-%% multiplier to apply to all motors to reach the given altitude.
--define(ALTITUDE_K, (1.0 - ?MOTOR_BASELINE) / 50.0). 
+-define(UDP_PORT, 4509).
+
+-define(PITCH_CMD,          16#0001).
+-define(ROLL_CMD,           16#0002).
+-define(YAW_CMD,            16#0003).
+-define(THROTTLE_CMD,       16#0004).
+-define(PITCH_TRIM_CMD,     16#0005).
+-define(ROLL_TRIM_CMD,      16#0006).
+-define(YAW_TRIM_CMD,       16#0007).
+-define(MAX_CMD_VAL,        16#3FF).
 
 -record(st, { 
+	  udp_sock = undefined,
+	  pitch_input = 0.0,
+	  roll_input = 0.0,
+	  yaw_input = 0.0,
+	  throttle_input = 0.0,
+	  pitch_trim_input = 0.0,
+	  roll_trim_input = 0.0,
+	  yaw_trim_input = 0.0,
+
 	  enabled = false,
 	  uart = undefined,
 	  pwm_pid = undefined,
@@ -70,8 +84,6 @@
 	  gyro_lowpass = { undefined, undefined, undefined },
 	  glitch_count = -1 %% 0 == glitch every now and then.
 	 }).
-
-
 
 
 
@@ -112,11 +124,15 @@ init([]) ->
     edrone_bat:init(),
     
     io:format("~n~nBat: ~f~n~n", [edrone_bat:read()]),
-%%    {ok, Uart} = edrone_navboard:init(),
+
+    %% Use our target port as the source as well
+    {ok, UDPSocket } = gen_udp:open(?UDP_PORT, [ binary ]), 
+
     {ok, Uart} = edrone_navboard:init(),
     {ok, #st { 
        uart = Uart, 
        pwm_pid = Pid,
+       udp_sock = UDPSocket,
        pidctl = { 
 	 edrone_pid:new(?PID_P, ?PID_I, ?PID_D, -1.0, 1.0), 
 	 edrone_pid:new(?PID_P, ?PID_I, ?PID_D, -1.0, 1.0), 
@@ -136,17 +152,6 @@ enable() ->
 disable() ->
     gen_server:call(?MODULE, flat_trim).
 
-%% Specifiy all positions.
-set_position(#position {} = Pos) ->
-    gen_server:call(?MODULE, {set, Pos}).
-
-%% Altitude. 
-set_altitude(CM) when is_number(CM) ->
-    gen_server:call(?MODULE, {set_altitude, CM}).
-
-%% Altitude. 
-set_pitch(A) when is_float(A), A =< 1.0, A >= 0.0->
-    gen_server:call(?MODULE, {set_pitch, A}).
     
 %%--------------------------------------------------------------------
 %% @private
@@ -187,19 +192,6 @@ handle_call(disable, _From, St) when St#st.enabled =:= true->
     edrone:set_pwm_norm(St#st.pwm_pid, 0.0, 0.0, 0.0, 0.0),
     { reply, ok, St#st { enabled = false } };
 
-%% Setup a new target position/orientation that we should strive
-%% to acheive.
-%% Once we have arrived at the new position, an "arrived" 
-%% message will be sent to the provided pid with the given arg
-%%
-handle_call({ set, #position { } = TargetPos}, _From, St) ->
-    { reply, ok, St#st { target_pos = TargetPos } };
-
-handle_call({ set_altitude, CM }, _From, St) ->
-    { reply, ok, St#st { target_pos = (St#st.target_pos)#position { alt = CM } } };
-
-handle_call({ set_pitch, A }, _From, St) ->
-    { reply, ok, St#st { target_pos = (St#st.target_pos)#position { pitch = A } } };
 
 handle_call(_Request, _From, St) ->
     Reply = ok,
@@ -268,8 +260,12 @@ handle_info({uart_error, Uart, Reason} , St) when Uart =:= St#st.uart ->
     io:format("UART ERROR: ~p~n", [ Reason ]),
     { noreply, St#st {enabled = false} };
 
+handle_info({udp, Sock, _, _, <<Cmd:6/unsigned, Val:10/unsigned>>} , St) 
+  when Sock =:= St#st.udp_sock ->
+    { noreply, decode_input(Cmd, Val, St) };
+
 handle_info(Info, St) ->
-    io:format("handle_info(~p)??: ~p~n", [ St, Info ]),
+    io:format("handle_info()??: ~p~n", [ Info ]),
     {noreply, St}.
 
 %%--------------------------------------------------------------------
@@ -321,9 +317,9 @@ process_nav_state(#st{ nav_ts = PrevTS,
     
 
     %% Accelerometer data
-    { AccPitch, NAccPitchLP } = lowpass_filter(AccPitchLP, NavState#nav_state.ax),
-    { AccRoll, NAccRollLP}   = lowpass_filter(AccRollLP, NavState#nav_state.ay),
-    { AccYaw, NAccYawLP}     = lowpass_filter(AccYawLP, NavState#nav_state.az),
+    { _AccPitch, NAccPitchLP } = lowpass_filter(AccPitchLP, NavState#nav_state.ax),
+    { _AccRoll, NAccRollLP}   = lowpass_filter(AccRollLP, NavState#nav_state.ay),
+    { _AccYaw, NAccYawLP}     = lowpass_filter(AccYawLP, NavState#nav_state.az),
     
     {Alt, NAltLP}     = lowpass_filter(St#st.alt_lowpass, NavState#nav_state.alt),
 
@@ -361,26 +357,29 @@ process_nav_state(#st{ nav_ts = PrevTS,
     %% toward the target position.
     %%
     NRampPos = ramp_position(RPos, TgtPos, TSDelta),
-    { M1, NPids } = calculate_motors(St#st.pidctl, CurPos, NRampPos),
-
-    %% Set the motor speeds
-
-
+    { M1, NPids } = calculate_motors(St#st.pidctl, CurPos, NRampPos, St#st.throttle_input),
+    
+    %%
+    %% Cut off the motors if we are under 0.02 throttle
+    %%
+    M2 = if St#st.throttle_input < 0.02 -> { 0.0, 0.0, 0.0, 0.0 };
+	    true -> M1
+	 end,
     %% Artificially introduce a glitch
-    {GlitchCount, M2} = 
+    {GlitchCount, M3} = 
 	case glitch(St#st.glitch_count) of
 	    -1 ->  %% Glitch deactivated.
-		{ -1, edrone_motor:set_pwm_norm(St#st.pwm_pid, M1) };
+		{ -1, edrone_motor:set_pwm_norm(St#st.pwm_pid, M2) };
 
 	    0 -> %% Currently no glitch
-		{ 0, edrone_motor:set_pwm_norm(St#st.pwm_pid, M1) };
+		{ 0, edrone_motor:set_pwm_norm(St#st.pwm_pid, M2) };
 
       	    Cnt -> %% Glitch in progress
       		{ Cnt, edrone_motor:set_pwm_norm(St#st.pwm_pid, {0.1, 0.1, 0.1, 0.1}) }
       	end,
     
 
-    St#st { motor = M2,
+    St#st { motor = M3,
 	    pidctl = NPids,
 	    ramp_pos = NRampPos,
 	    current_pos = NCurPos,
@@ -404,7 +403,7 @@ glitch(0) ->
 glitch(Count) ->
     Count - 1.
 
-calculate_motors({P0, P1, P2, P3}, CurPos, TgtPos) ->
+calculate_motors({P0, P1, P2, P3}, CurPos, TgtPos, Throttle) ->
 
     %% Calculate the current position of each corner of the drone.
     CM0 = cap(CurPos#position.pitch + CurPos#position.roll, -1.0, 1.0),
@@ -418,32 +417,24 @@ calculate_motors({P0, P1, P2, P3}, CurPos, TgtPos) ->
     TM2 = cap(-TgtPos#position.pitch - TgtPos#position.roll, -1.0, 1.0),
     TM3 = cap(-TgtPos#position.pitch + TgtPos#position.roll, -1.0, 1.0),
 
-    io:format("P(~-7.4f) R(~-7.4f) CM(~-7.4f|~-7.4f|~-7.4f|~-7.4f) TM(~-7.4f|~-7.4f|~-7.4f|~-7.4f)",
-     	      [CurPos#position.pitch, CurPos#position.roll,
-     	       CM0, CM1, CM2, CM3,
-     	       TM0-CM0, TM1-CM1, TM2-CM2, TM3-CM3]),
+    io:format(" P(~-7.4f|~-7.4f) R(~-7.4f|~-7.4f) CM(~-7.4f|~-7.4f|~-7.4f|~-7.4f) TM(~-7.4f|~-7.4f|~-7.4f|~-7.4f)",
+	      [ CurPos#position.pitch, TgtPos#position.pitch,
+		CurPos#position.roll,TgtPos#position.roll,
+		CM0, CM1, CM2, CM3,
+		TM0-CM0, TM1-CM1, TM2-CM2, TM3-CM3]),
 
     
     %% Set the new target point for each motor, and then calculate
     %% a motor output to add to the baseline.
     PidTS = edrone_pid:timestamp(),
-    io:format("P("),
+%%    io:format("P("),
     { NM0, NP0 } = edrone_pid:update(edrone_pid:set_point(P0, TM0), CM0, PidTS), 
     { NM1, NP1 } = edrone_pid:update(edrone_pid:set_point(P1, TM1), CM1, PidTS), 
     { NM2, NP2 } = edrone_pid:update(edrone_pid:set_point(P2, TM2), CM2, PidTS), 
     { NM3, NP3 } = edrone_pid:update(edrone_pid:set_point(P3, TM3), CM3, PidTS), 
-    io:format(") "),
-    
-    AltAdd = ?MOTOR_BASELINE + TgtPos#position.alt * ?ALTITUDE_K,
-    io:format("| CA(~-7.4f), TA(~-7.4f)*K(~-7.4f)=~-7.4f",
-      	      [ CurPos#position.alt,TgtPos#position.alt, ?ALTITUDE_K,
-		TgtPos#position.alt * ?ALTITUDE_K]),
-
-    io:format("~n"),
-    {{ max(NM0 + AltAdd, ?MOTOR_BASELINE), 
-       max(NM1 + AltAdd, ?MOTOR_BASELINE), 
-       max(NM2 + AltAdd, ?MOTOR_BASELINE), 
-       max(NM3 + AltAdd, ?MOTOR_BASELINE) },
+%%    io:format(") "),
+     io:format("~n"),
+    {{ NM0 + Throttle, NM1 + Throttle, NM2 + Throttle, NM3 + Throttle},
      { NP0, NP1, NP2, NP3 }}.
 
 
@@ -465,20 +456,69 @@ lowpass_filter(_, Val) ->
 
 ramp_position(RPos, TPos, TSDelta) ->
     RPos#position {
-       pitch = ramp_position_(RPos#position.pitch, TPos#position.pitch, ?PITCH_RAMP, TSDelta),
-       roll = ramp_position_(RPos#position.roll, TPos#position.roll, ?ROLL_RAMP, TSDelta),
-       yaw = ramp_position_(RPos#position.yaw, TPos#position.yaw, ?YAW_RAMP, TSDelta),
-       alt = ramp_position_(RPos#position.alt, TPos#position.alt, ?ALT_RAMP, TSDelta)
-      }.
+      pitch = ramp_position_(RPos#position.pitch, TPos#position.pitch, ?PITCH_RAMP, TSDelta),
+      roll = ramp_position_(RPos#position.roll, TPos#position.roll, ?ROLL_RAMP, TSDelta),
+      yaw = ramp_position_(RPos#position.yaw, TPos#position.yaw, ?YAW_RAMP, TSDelta),
+      alt = ramp_position_(RPos#position.alt, TPos#position.alt, ?ALT_RAMP, TSDelta)
+     }.
 
-ramp_position_(Ramp, Target, Max, TSDelta) when Ramp > Target + 0.0001->    
-    Ramp - min(Max * TSDelta, (Ramp - Target) * TSDelta);
+ramp_position_(Ramp, Target, Max, TSDelta) when Ramp > Target + Max * TSDelta->    
+%%    io:format("-T(~f) R(~f) TSDelta(~f) Max(~f)~n", [Target, Ramp, TSDelta, Max]),
+    Ramp - Max * TSDelta;
 
-ramp_position_(Ramp, Target, Max, TSDelta) when Ramp < Target - 0.0001 -> 
-    Ramp + min(Max * TSDelta , (Target - Ramp) * TSDelta);
+ramp_position_(Ramp, Target, Max, TSDelta) when Ramp < Target - Max * TSDelta -> 
+%%    io:format("+T(~f) R(~f) TSDelta(~f) Max(~f)~n", [Target, Ramp, TSDelta, Max]),
+    Ramp + Max * TSDelta;
 
-ramp_position_(Ramp, _Target, _Max, _TSDelta)  ->    
-    Ramp.
+ramp_position_(_Ramp, Target, _Max, _TSDelta)  ->    
+%%    io:format("-=T(~f) R(~f) TSDelta(~f) Max(~f) ~f~n", [Target, Ramp, TSDelta, Max, TSDelta * Max]),
+    Target.
 
 cap(Val, Min, Max) ->
     min(max(Val, Min), Max).
+
+decode_input(?PITCH_CMD, Val, #st {target_pos = TgtPos} = St) -> 
+    Inp = convert_input_value(Val),
+     io:format("Pitch: ~-7.4f~n", [Inp]),
+    St#st { pitch_input = Inp, target_pos = TgtPos#position {pitch = Inp / 10.0}};
+    
+decode_input(?ROLL_CMD, Val, #st {target_pos = TgtPos} = St) -> 
+    Inp = convert_input_value(Val),
+     io:format("               Roll: ~-7.4f~n", [Inp]),
+    St#st { roll_input = Inp, target_pos = TgtPos#position {roll = Inp / 10.0}};
+    
+
+decode_input(?YAW_CMD, Val, St) -> 
+    Inp = convert_input_value(Val),
+    %% io:format("                             Yaw: ~-7.4f~n", [Inp]),
+    St#st { yaw_input = Inp };
+
+decode_input(?THROTTLE_CMD, Val, St) -> 
+    Inp = Val / ?MAX_CMD_VAL,
+    io:format("                                            Throttle: ~-7.4f~n", [Inp]),
+    St#st { throttle_input = Inp };
+
+decode_input(?PITCH_TRIM_CMD, Val, St) -> 
+    Inp = convert_input_value(Val),
+    io:format("---- PitchTrim: ~-7.4f~n", [Inp]),
+    St#st { pitch_trim_input = Inp };
+
+decode_input(?ROLL_TRIM_CMD, Val, St) ->
+    Inp = convert_input_value(Val),
+    io:format("---- RollTrim: ~-7.4f~n", [Inp]),
+    St#st { roll_trim_input = Inp };
+
+decode_input(?YAW_TRIM_CMD, Val, St) ->
+    Inp = convert_input_value(Val),
+    io:format("---- YawTrim: ~-7.4f~n", [Inp]),
+    St#st { roll_trim_input = Inp };
+
+
+decode_input(ErrKey, ErrVal, St)-> 
+    io:format("---- Unknown key(~p) val(~p)~n", [ErrKey, ErrVal]),
+    St.
+    
+    
+convert_input_value(Val) ->
+    (Val / ?MAX_CMD_VAL) * 2 - 1.
+
