@@ -25,6 +25,7 @@ start_link() ->
 init([]) ->
     {ok, { {one_for_one, 5, 10},
 	   [
-	    ?CHILD(edrone_control, worker)
+	    ?CHILD(edrone_control, worker),
+	    ?CHILD(edrone_upgrade, worker)
 	   ]} }.
 
