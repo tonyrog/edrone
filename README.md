@@ -92,14 +92,25 @@ Connect a Logitech Extreme 3D Pro joystick to a PC connected to the AR Drone WiF
    application:start(edrone_pilot).
    ```
 
-2. Start an erlang prompt on the Drone:
+2. Telnet to the AR Drone
+
+   ```
+   telnet 192.168.1.1
+   ```
+
+3. Kill the original AR Drone flight control software.
+
+   ```
+   ps | grep program.elf | head -n 1 - | cut -c 1-5 | xargs kill
+   ```
+
+4. Start an erlang prompt on the Drone:
 
     ```
     /data/erlang/bin/erl
     ```
 
-3. Start the necessary apps on the drone
-    
+5. Start the necessary apps on the drone
     On the erlang command prompt, enter:
 
     ```
