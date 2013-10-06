@@ -170,13 +170,13 @@ ethernet cable from the PC.
    while the drone is on the ground.
 
 6. Remove the glitch fromn edrone_control.erl<br>
-   Set the HAVE_GLITCH value in edrone_control.erl, line 58, to -1
+   Set the HAVE_GLITCH value in edrone_control.erl, line 58, to -1.
 
 7. Recompile and transfer the fixed software to the drone<br>
    Repeat step 3 above to compile and transfer the image.
 
 8. Raise the drone to 1 meters height<br>
-   Don your pilot shades and apply throttle until the desired height
+   Apply throttle until the desired height
    is reached. Control pitch, roll and yaw roll using the the
    joystick. The glitch will cut out the motors at irregular
    intervals, but the flight control system will compensate.
