@@ -147,6 +147,7 @@ ethernet cable from the PC.
        '''rebar compile 
        cd priv
        sh transfer-libs.sh'''
+
    The new software image, with a glitch, is now installed on the drone.
 
 4. Start drone pilot software on the development PC<br>
