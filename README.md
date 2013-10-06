@@ -82,26 +82,34 @@ port 546.
 # The flying bit
 
 Connect a Logitech Extreme 3D Pro joystick to a PC connected to the AR Drone WiFi access point.
-On the PC, start erlang and fire up the edrone_pilot app:
-
-    erl 
-    application:start(inpevt).
-    application:start(edrone_pilot).
 
 
-Start an erlang prompt on the Drone:
+1. On the PC, start erlang and fire up the edrone_pilot app:
 
+   ```
+   erl 
+   application:start(inpevt).
+   application:start(edrone_pilot).
+   ```
+
+2. Start an erlang prompt on the Drone:
+
+    ```
     /data/erlang/bin/erl
+    ```
 
-Start the necessary apps:
+3. Start the necessary apps on the drone
     
+    On the erlang command prompt, enter:
+
+    ```
     application:start(uart).
     application:start(gpio). 
     application:start(edrone). 
     edrone_control:flat_trim(). 
     edrone_control:enable().
-
-
+    ```
+    
 ## Joystick controls
 
 - Stick forward<br>
