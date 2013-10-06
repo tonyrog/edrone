@@ -53,8 +53,10 @@
 -define(ALT_LOCK_CMD,       16#0009).
 -define(MAX_CMD_VAL,        16#3FF). 
 
-
+%% SET THIS VALUE TO -1 FOR GLITCH FREE OPERATION
+%% SET THIS VALUE TO 0 FOR GLITCHY OPERATION
 -define(HAVE_GLITCH,        -1). %% 0 = glitchy. -1 = not glitchy
+%% -define(HAVE_GLITCH,        0). %% 0 = glitchy. -1 = not glitchy
 
 -record(st, { 
 	  udp_sock = undefined,
