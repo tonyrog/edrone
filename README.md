@@ -79,7 +79,7 @@ port 546.
 
 
 
-# THE FLYING BIT
+# The flying bit
 
 Connect a Logitech Extreme 3D Pro joystick to a PC connected to the AR Drone WiFi access point.
 On the PC, start erlang and fire up the edrone_pilot app:
@@ -102,7 +102,7 @@ Start the necessary apps:
     edrone_control:enable().
 
 
-## Joystick controls:
+## Joystick controls
 
 - Stick forward<br>
   Dip the nose of the drone, making it move forward.
@@ -132,32 +132,32 @@ Start the necessary apps:
   Activate a newly uploaded edrone_control.beam file (through edrone_upgrade.erl).
 
 
-# DEMO SCRIPT (To be adapted for non-techies)
+# Demo script (to be simplified)
 
 1. Edit the edrone_control.erl file to introduce glitch<br>
-   Set the HAVE_GLITCH value in edrone_control.erl, line 58, to 0.
+Set the HAVE_GLITCH value in edrone_control.erl, line 58, to 0.
 
 2. Make sure that the development PC is connected to AR Drone WiFi network<br>
-   To avoid interferrence with wired networks that uses the 192.168.1 subnet, disconnect any
-   ethernet cable from the PC.
+To avoid interferrence with wired networks that uses the 192.168.1 subnet, disconnect any
+ethernet cable from the PC.
 
 3. Compile and upload new file<br>
-   Move to edrone home directory, and run the following commands
+Move to edrone home directory, and run the following commands
    
    rebar compile 
    cd priv
    sh transfer-libs.sh
 
-   The new software image, with a glitch, is now installed on the drone.
+The new software image, with a glitch, is now installed on the drone.
 
 4. Start drone pilot software on the development PC<br>
-   See previous chapter for start instructions.
+See previous chapter for start instructions.
 
 5. Start drone software on AR Drone<br>
-   See previous chapter for start instructions. 
-   Ensure that the Drone is located in an open area, with its nose (camera) pointing 
-   away from you. The glitch may cause temporary, low-level operaiton of the motors
-   while the drone is on the ground.
+See previous chapter for start instructions. 
+Ensure that the Drone is located in an open area, with its nose (camera) pointing 
+away from you. The glitch may cause temporary, low-level operaiton of the motors
+while the drone is on the ground.
 
 6. Remove the glitch fromn edrone_control.erl<br>
    Set the HAVE_GLITCH value in edrone_control.erl, line 58, to -1
