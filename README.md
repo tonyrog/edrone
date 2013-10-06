@@ -142,22 +142,22 @@ To avoid interferrence with wired networks that uses the 192.168.1 subnet, disco
 ethernet cable from the PC.
 
 3. Compile and upload new file<br>
-Move to edrone home directory, and run the following commands
-   
-   rebar compile 
-   cd priv
-   sh transfer-libs.sh
+   Move to edrone home directory, and run the following commands
 
-The new software image, with a glitch, is now installed on the drone.
+       rebar compile 
+       cd priv
+       sh transfer-libs.sh
+
+   The new software image, with a glitch, is now installed on the drone.
 
 4. Start drone pilot software on the development PC<br>
-See previous chapter for start instructions.
+   See previous chapter for start instructions.
 
 5. Start drone software on AR Drone<br>
-See previous chapter for start instructions. 
-Ensure that the Drone is located in an open area, with its nose (camera) pointing 
-away from you. The glitch may cause temporary, low-level operaiton of the motors
-while the drone is on the ground.
+   See previous chapter for start instructions. 
+   Ensure that the Drone is located in an open area, with its nose (camera) pointing 
+   away from you. The glitch may cause temporary, low-level operaiton of the motors
+   while the drone is on the ground.
 
 6. Remove the glitch fromn edrone_control.erl<br>
    Set the HAVE_GLITCH value in edrone_control.erl, line 58, to -1
