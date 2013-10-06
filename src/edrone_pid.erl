@@ -9,6 +9,7 @@
 
 -export([new/3, new/5, new/6, new/7]).
 -export([set_point/2, set_point/3]).
+-export([get_point/1]).
 -export([set_param/4, set_integral/2, set_integral/4]).
 -export([update/2, update/3]).
 -export([timestamp_to_us/1]).
@@ -87,6 +88,10 @@ set_point(PID, Value, Time)
 	      set_point_time = Time,
 	      set_point_dt_sum = 0 }.
 
+
+get_point(PID) ->
+    PID#pid.target_set_point.
+  
 update(PID, Feed) when is_number(Feed) ->
     update(PID, Feed, os:timestamp()).
 

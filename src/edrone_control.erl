@@ -26,13 +26,15 @@
 %% 1.0    0.25   0.3  WORKS
 
 
--define(PID_P, 1.0). 
--define(PID_I, 0.5).
+-define(PID_P, 0.75). 
+-define(PID_I, 0.25).
 -define(PID_D, 0.2). 
 
 -define(PITCH_RAMP, 0.8). %% Rampup/rampdown per second
--define(YAW_RAMP,   0.8). %% Rampup/rampdown per second
+-define(YAW_RAMP,   100.0). %% Rampup/rampdown per second
 -define(ROLL_RAMP,  0.8). %% Rampup/rampdown per second
+
+-define(MAX_ALT, 1000.0). %% Max altitude, in cm.
 
 -define(ALT_RAMP,   6.0). %% Rampup/rampdown - cm / per second
 
@@ -48,7 +50,9 @@
 -define(ROLL_TRIM_CMD,      16#0006).
 -define(YAW_TRIM_CMD,       16#0007).
 -define(UPGRADE_CMD,        16#0008).
--define(MAX_CMD_VAL,        16#3FF).
+-define(ALT_LOCK_CMD,       16#0009).
+-define(MAX_CMD_VAL,        16#3FF). 
+
 
 -define(HAVE_GLITCH,        -1). %% 0 = glitchy. -1 = not glitchy
 
@@ -61,9 +65,9 @@
 	  pitch_trim_input = 0.0,
 	  roll_trim_input = 0.0,
 	  yaw_trim_input = 0.0,
-
 	  enabled = false,
 	  yaw_enabled = false, %% Don't try to do yaw before we are off the ground.
+	  alt_lock_pid = undefined,  %% Only in use when we have altitude lock.
 	  uart = undefined,
 	  pwm_pid = undefined,
 	  nav_recv_ref = undefined,
@@ -330,7 +334,7 @@ process_nav_state(#st{ nav_ts = PrevTS,
     { GyroPitchLP, GyroRollLP, GyroYawLP } = St#st.gyro_lowpass,
     %% { GyroPitch, NGyroPitchLP } = lowpass_filter(GyroPitchLP, NavState#nav_state.gx),
     %% { GyroRoll, NGyroRollLP }   = lowpass_filter(GyroRollLP, NavState#nav_state.gy),
-    %% { GyroYaw, NGyroYawLP }     = lowpass_filter(GyroYawLP, NavState#nav_state.gz),
+    %% { GyroYaw, NGyroYawLP }     = lowpass_filter(GyroYawLP, -NavState#nav_state.gz),
     { GyroPitch, NGyroPitchLP } = { -NavState#nav_state.gy, GyroPitchLP },
     { GyroRoll, NGyroRollLP }   = { NavState#nav_state.gx, GyroRollLP },
     { GyroYaw, NGyroYawLP }     = { -NavState#nav_state.gz, GyroYawLP},
@@ -343,17 +347,19 @@ process_nav_state(#st{ nav_ts = PrevTS,
       yaw = CurPos#position.yaw + GyroYaw * TSDelta
      },
 
+    %% Enable yaw only if altitude is greater than 30cm.
     %% Enable yaw if we see a "jump" in z accelerometer as we leave the ground.
-    YawEnabled = if St#st.yaw_enabled =:= true -> true;
-		    NavState#nav_state.az < -0.015 -> io:format("YAW ENABLED~n"), true;
-		    true -> false
-		 end,
+    YawEnabled = 
+	if St#st.yaw_enabled =:= true -> true;
+	   St#st.throttle_input < 0.02 -> io:format("Yaw disabled~n"), false;
+	   St#st.throttle_input > 0.4 -> io:format("Yaw enabled~n"), true;
+	   true -> false
+	end,
 
-    %% If Yaw is enabled, calculcate a new target position with an updated target yaw.
     NTgtPos = 
-	if YawEnabled ->
+	if YawEnabled =:= true ->
 		TgtPos#position { yaw = TgtPos#position.yaw + St#st.yaw_input * TSDelta };
-	   true -> TgtPos
+	   true -> TgtPos#position { yaw = NCurPos#position.yaw } %% Let target follow current
 	end,
 
     %%
@@ -362,8 +368,8 @@ process_nav_state(#st{ nav_ts = PrevTS,
     %%
     NRampPos = ramp_position(RPos, NTgtPos, TSDelta),
 
-    { M1, NPids } = calculate_motors(St#st.pidctl, CurPos, NRampPos,
-				     St#st.throttle_input),
+    { NAltLockPid, M1, NPids } = calculate_motors(St#st.pidctl, NCurPos, NRampPos,
+						  St#st.throttle_input, St#st.alt_lock_pid),
     
     %%
     %% Cut off the motors if we are under 0.02 throttle
@@ -387,8 +393,9 @@ process_nav_state(#st{ nav_ts = PrevTS,
 
     St#st { motor = M3,
 	    pidctl = NPids,
-	    ramp_pos = NRampPos,
+	    alt_lock_pid = NAltLockPid,
 	    yaw_enabled = YawEnabled,
+	    ramp_pos = NRampPos,
 	    current_pos = NCurPos,
 	    target_pos = NTgtPos,
 	    gyro_lowpass = { NGyroPitchLP, NGyroRollLP, NGyroYawLP },
@@ -411,7 +418,7 @@ glitch(0) ->
 glitch(Count) ->
     Count - 1.
 
-calculate_motors({P0, P1, P2, P3}, CurPos, TgtPos, Throttle) ->
+calculate_motors({P0, P1, P2, P3}, CurPos, TgtPos, Throttle, AltLockPid) ->
 
     YawDelta = TgtPos#position.yaw - CurPos#position.yaw, 
     %% Calculate the current position of each corner of the drone.
@@ -426,12 +433,12 @@ calculate_motors({P0, P1, P2, P3}, CurPos, TgtPos, Throttle) ->
     TM2 = cap(-TgtPos#position.pitch - TgtPos#position.roll - YawDelta, -1.0, 1.0),
     TM3 = cap(-TgtPos#position.pitch + TgtPos#position.roll + YawDelta, -1.0, 1.0),
 
-    %% io:format("P(~-7.4f|~-7.4f) R(~-7.4f|~-7.4f) Yaw(~-7.4f|~-7.4f) CM(~-7.4f|~-7.4f|~-7.4f|~-7.4f) TM(~-7.4f|~-7.4f|~-7.4f|~-7.4f)",
-    %% 	      [  CurPos#position.pitch, TgtPos#position.pitch,
-    %% 		CurPos#position.roll,TgtPos#position.roll,
-    %% 		TgtPos#position.yaw, CurPos#position.yaw, 
-    %% 		CM0, CM1, CM2, CM3,
-    %% 		TM0-CM0, TM1-CM1, TM2-CM2, TM3-CM3]),
+      %% io:format("P(~-7.4f|~-7.4f) R(~-7.4f|~-7.4f) Yaw(~-7.4f|~-7.4f) CM(~-7.4f|~-7.4f|~-7.4f|~-7.4f) TM(~-7.4f|~-7.4f|~-7.4f|~-7.4f)~n",
+      %% 	       [  CurPos#position.pitch, TgtPos#position.pitch,
+      %% 		  CurPos#position.roll,TgtPos#position.roll,
+      %% 		  TgtPos#position.yaw, CurPos#position.yaw, 
+      %% 		  CM0, CM1, CM2, CM3,
+      %% 		  TM0-CM0, TM1-CM1, TM2-CM2, TM3-CM3]),
 
     
 
@@ -445,9 +452,22 @@ calculate_motors({P0, P1, P2, P3}, CurPos, TgtPos, Throttle) ->
     { NM3, NP3 } = edrone_pid:update(edrone_pid:set_point(P3, TM3), CM3, PidTS), 
 %%    io:format(") "),
 %%     io:format("~n"),
-    {{ NM0 + Throttle, NM1 + Throttle, NM2 + Throttle, NM3 + Throttle},
-     { NP0, NP1, NP2, NP3 }}.
 
+    %% If altitude lock is off, we just use throttle (0.0 - 1.0)
+    %% If altitude lock is set, we use a proportional adjuster, with caps
+    { AltAdd, NAltLockPid } =
+	case AltLockPid of
+	    undefined -> { 0.0 , undefined };
+	    _ -> edrone_pid:update(AltLockPid, CurPos#position.alt / ?MAX_ALT, PidTS)
+	end,
+		
+    { NAltLockPid, 
+      { NM0 + AltAdd + Throttle,
+	NM1 + AltAdd + Throttle, 
+	NM2 + AltAdd + Throttle, 
+	NM3 + AltAdd + Throttle},
+      { NP0, NP1, NP2, NP3 }
+    }.
 
 
 lowpass_filter({V0, V1, V2}, Val) ->
@@ -469,8 +489,8 @@ ramp_position(RPos, TPos, TSDelta) ->
     RPos#position {
       pitch = ramp_position_(RPos#position.pitch, TPos#position.pitch, ?PITCH_RAMP, TSDelta),
       roll = ramp_position_(RPos#position.roll, TPos#position.roll, ?ROLL_RAMP, TSDelta),
-      yaw = ramp_position_(RPos#position.yaw, TPos#position.yaw, ?YAW_RAMP, TSDelta),
-      alt = ramp_position_(RPos#position.alt, TPos#position.alt, ?ALT_RAMP, TSDelta)
+      yaw = ramp_position_(RPos#position.yaw, TPos#position.yaw, ?YAW_RAMP, TSDelta)
+      %% Altitude is not part of ramp position.
      }.
 
 ramp_position_(Ramp, Target, Max, TSDelta) when Ramp > Target + Max * TSDelta->    
@@ -490,24 +510,29 @@ cap(Val, Min, Max) ->
 
 decode_input(?PITCH_CMD, Val, #st {target_pos = TgtPos} = St) -> 
     Inp = convert_input_value(Val),
-     io:format("Pitch: ~-7.4f~n", [Inp]),
+     %% io:format("Pitch: ~-7.4f~n", [Inp]),
     St#st { pitch_input = Inp, target_pos = TgtPos#position {pitch = Inp / 10.0}};
     
 decode_input(?ROLL_CMD, Val, #st {target_pos = TgtPos} = St) -> 
     Inp = convert_input_value(Val),
-     io:format("               Roll: ~-7.4f~n", [Inp]),
+     %% io:format("               Roll: ~-7.4f~n", [Inp]),
     St#st { roll_input = Inp, target_pos = TgtPos#position {roll = Inp / 10.0}};
     
 
 decode_input(?YAW_CMD, Val, St) -> 
     Inp = convert_input_value(Val),
-    io:format("                             Yaw: ~-7.4f~n", [Inp]),
+%%    io:format("                             Yaw: ~p/~-7.4f~n", [Val,Inp]),
     St#st { yaw_input = Inp / 3};
 
-decode_input(?THROTTLE_CMD, Val, St) -> 
+decode_input(?THROTTLE_CMD, Val, St) when St#st.alt_lock_pid =:= undefined-> 
     Inp = Val / ?MAX_CMD_VAL,
-    io:format("                                            Throttle: ~-7.4f~n", [Inp]),
+    %% io:format("                                            Throttle: ~-7.4f~n", [Inp]),
     St#st { throttle_input = Inp };
+
+
+%% Don't react to throttle when in alt lock mode
+decode_input(?THROTTLE_CMD, _Val, St) -> 
+    St;
 
 decode_input(?PITCH_TRIM_CMD, Val, St) -> 
     Inp = convert_input_value(Val),
@@ -529,6 +554,17 @@ decode_input(?UPGRADE_CMD, _Val, St) ->
     gen_server:cast(edrone_upgrade, { upgrade, ?MODULE }),
     St;
 
+decode_input(?ALT_LOCK_CMD, 1, St) ->
+    io:format("Altitude Lock: Engaged!~n"),
+    AltPid = edrone_pid:set_point(edrone_pid:new(?PID_P, ?PID_I, ?PID_D, -1.0, 1.0),
+				 (St#st.current_pos)#position.alt / ?MAX_ALT), %% Alttitude lock    
+    St#st { alt_lock_pid = AltPid };
+
+
+
+decode_input(?ALT_LOCK_CMD, 0, St) ->
+    io:format("Altitude Disengaged!~n"),
+    St#st { alt_lock_pid = undefined };
 
 decode_input(ErrKey, ErrVal, St)-> 
     io:format("---- Unknown key(~p) val(~p)~n", [ErrKey, ErrVal]),

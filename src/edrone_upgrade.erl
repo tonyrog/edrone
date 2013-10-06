@@ -84,14 +84,16 @@ handle_call(_Request, _From, State) ->
 %%--------------------------------------------------------------------
 handle_cast({upgrade, Module}, State) ->
     io:format("Will upgrade ~p~n", [ Module ]),
+    Start = erlang:now(),
     R1 = sys:suspend(Module),
     R2 = code:purge(Module),
     R3 = code:load_file(Module),
     R4 = sys:change_code(Module,Module,"0",[]), 
     R5 = sys:resume(Module),
+    Stop = erlang:now(),
 
-    io:format("edrone_upgrade(): R1(~p) R2(~p) R3(~p) R4(~p) R5(~p)~n",
-	      [R1, R2, R3, R4, R5 ]),
+    io:format("edrone_upgrade(): R1(~p) R2(~p) R3(~p) R4(~p) R5(~p): TIME: ~p us~n",
+	      [R1, R2, R3, R4, R5, timer:now_diff(Stop, Start) ]),
 
     {noreply, State};
 
@@ -110,7 +112,7 @@ handle_cast(Msg, State) ->
 %% @end
 %%--------------------------------------------------------------------
 
-handle_info(Info, State) ->
+handle_info(_Info, State) ->
     {noreply, State}.
 
 %%--------------------------------------------------------------------
