@@ -177,8 +177,8 @@ ethernet cable from the PC.
 5. Start drone software on AR Drone<br>
    See previous chapter for start instructions. 
    Ensure that the Drone is located in an open area, with its nose (camera) pointing 
-   away from you. The glitch may cause temporary, low-level operaiton of the motors
-   while the drone is on the ground.
+   away from you. The glitch may cause temporary, low-level operation of the motors
+   while the drone is still on the ground.
 
 6. Remove the glitch fromn edrone_control.erl<br>
    Set the HAVE_GLITCH value in edrone_control.erl, line 58, to -1.
@@ -199,7 +199,7 @@ ethernet cable from the PC.
    
 
 10. Press the thumb button to upgrade software<br>
-    The glitch will dissappear and flight will be stabilized.
+    The glitch will disappear and flight will be stabilized.
 
 11. Release the fire button to disengage altitude lock<br>
 
