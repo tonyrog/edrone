@@ -144,9 +144,11 @@ ethernet cable from the PC.
 3. Compile and upload new file<br>
    Move to edrone home directory, and run the following commands
 
-       ```rebar compile<br>
-       cd priv<br>
-       sh transfer-libs.sh```
+   ```
+   rebar compile
+   cd priv
+   sh transfer-libs.sh
+   ```
 
    The new software image, with a glitch, is now installed on the drone.
 
